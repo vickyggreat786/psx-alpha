@@ -16,3 +16,4 @@ skills/
 *.sqlite-shm
 *.sqlite-wal
 bun.lock
+.vercel
