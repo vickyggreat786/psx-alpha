@@ -1,0 +1,86 @@
+// PSX Alpha — full schema with paper trading + notification tracking + candle history
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Saved candle history — persisted so we build up a real database over time
+model CandleHistory {
+  id        String   @id @default(cuid())
+  symbol    String
+  date      String
+  open      Float
+  high      Float
+  low       Float
+  close     Float
+  volume    Float
+  changePct Float?
+  savedAt   DateTime @default(now())
+
+  @@unique([symbol, date])
+  @@index([symbol])
+  @@index([date])
+}
+
+// Paper trading portfolio
+model PaperPosition {
+  id          String   @id @default(cuid())
+  symbol      String
+  qty         Int
+  entryPrice  Float
+  stopLoss    Float
+  target      Float
+  status      String   @default("open") // open | closed
+  exitPrice   Float?
+  closedAt    DateTime?
+  pnl         Float?
+  confidence  Float
+  reason      String
+  openedAt    DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([status])
+  @@index([symbol])
+}
+
+model PaperTrade {
+  id        String   @id @default(cuid())
+  symbol    String
+  side      String // buy | sell
+  qty       Int
+  price     Float
+  reason    String
+  pnl       Float?
+  at        DateTime @default(now())
+
+  @@index([symbol])
+}
+
+model NotificationSub {
+  id           String   @id @default(cuid())
+  endpoint     String   @unique
+  keysP256dh   String
+  keysAuth     String
+  createdAt    DateTime @default(now())
+}
+
+model AlertLog {
+  id        String   @id @default(cuid())
+  kind      String // target_hit | stop_hit | new_signal | test
+  symbol    String?
+  title     String
+  body      String
+  channels  String // comma-separated: telegram,webpush
+  at        DateTime @default(now())
+}
+
+// System-wide settings (Telegram bot token + chat ID, etc.)
+model Setting {
+  key   String @id
+  value String
+}

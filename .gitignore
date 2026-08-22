@@ -1,0 +1,17 @@
+.env
+.env.local
+.next/
+.open-next/
+.wrangler/
+node_modules/
+db/
+*.db
+*.log
+upload/
+tool-results/
+worklog.md
+skills/
+.vercel/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
