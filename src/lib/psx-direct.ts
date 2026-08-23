@@ -65,8 +65,6 @@ function toNum(s: string): number {
 const NUM = String.raw`\d+(?:,\d{3})*(?:\.\d+)?|\d+\.\d+`;
 
 const INDEX_RE = new RegExp(
-  // Match index symbol preceded by space or string start, followed by
-  // "VALUE CHANGE (PCT%)" pattern. No lookahead needed — direct match.
   String.raw`(?:^|\s)([A-Z][A-Z0-9]{3,12})\s+(` +
     NUM +
     String.raw`)\s+(-?` +
@@ -75,10 +73,47 @@ const INDEX_RE = new RegExp(
   "g"
 );
 
+// Sector header regex — matches "<SectorName> SCRIP LDCP OPEN HIGH LOW CURRENT CHANGE VOLUME"
+const SECTOR_HEADER_RE =
+  /([A-Z][A-Z\s&]+?)\s+SCRIP\s+LDCP\s+OPEN\s+HIGH\s+LOW\s+CURRENT\s+CHANGE\s+VOLUME/g;
+
+// Header words that should never appear inside a scrip name (case-sensitive).
+const HEADER_WORDS = ["HIGH", "LOW", "CURRENT", "CHANGE", "VOLUME", "LDCP", "OPEN", "SCRIP", "MARKET", "SUMMARY", "BOARD"];
+
+// Scrip row regex — captures name + 7 numbers.
+// Name can be: "OGDC", "P.V.C.", "Indus Motor Co.", "AICL-AUG", "D.G. Khan Cement"
+// IMPORTANT: We use a non-greedy capture but require NO header words inside.
 const SCRIP_RE = new RegExp(
-  String.raw`([A-Z][A-Z0-9 .&'-]{2,40}?)\s+(` + NUM + String.raw`)\s+(` + NUM + String.raw`)\s+(` + NUM + String.raw`)\s+(` + NUM + String.raw`)\s+(` + NUM + String.raw`)\s+(-?[\d.]+)\s+(\d[\d,]+)`,
+  String.raw`([A-Z][A-Z0-9 .&'\-]{2,60}?)\s+(` +
+    NUM +
+    String.raw`)\s+(` +
+    NUM +
+    String.raw`)\s+(` +
+    NUM +
+    String.raw`)\s+(` +
+    NUM +
+    String.raw`)\s+(` +
+    NUM +
+    String.raw`)\s+(-?[\d.]+)\s+(\d[\d,]+)`,
   "g"
 );
+
+function looksLikeHeaderName(name: string): boolean {
+  // Reject if name is exactly a header word
+  if (/^(?:APPAREL|AUTOMOBILE|SCRIP|LDCP|OPEN|HIGH|LOW|CURRENT|CHANGE|VOLUME|MARKET|SUMMARY|BOARD|GEM|MAIN)$/i.test(name)) {
+    return true;
+  }
+  // Reject if name contains any header word as a whole word
+  for (const w of HEADER_WORDS) {
+    const re = new RegExp(`\\b${w}\\b`);
+    if (re.test(name)) return true;
+  }
+  // Reject if too long (likely a multi-row match)
+  if (name.length > 35) return true;
+  // Reject if it has more than 4 separate tokens (likely captures header)
+  if (name.split(/\s+/).length > 5) return true;
+  return false;
+}
 
 // Parse the PSX PHP HTML response (server-side rendered — no JS needed)
 export function parseDirectHtml(html: string): DirectPsxSummary {
@@ -115,45 +150,78 @@ export function parseDirectHtml(html: string): DirectPsxSummary {
     });
   }
 
-  // Parse scrips in the body (with sector headers)
-  const scrips: DirectScrip[] = [];
-  const sectorRe = /([A-Z][A-Z\s&]+?)\s+SCRIP\s+LDCP\s+OPEN\s+HIGH\s+LOW\s+CURRENT\s+CHANGE\s+VOLUME/g;
-  const sectors: { name: string; pos: number }[] = [];
-  let sm: RegExpExecArray | null;
-  while ((sm = sectorRe.exec(body)) !== null) {
-    sectors.push({ name: sm[1].trim(), pos: sm.index + sm[0].length });
+  // Build list of sector header positions in the body.
+  // The PSX page lists sectors in this order:
+  //   APPAREL, AUTOMOBILE ASSEMBLER, ..., FUTURE CONTRACTS, GLASS, ..., WOOLLEN
+  //   and then REPEATS some sectors at the end (e.g. MISCELLANEOUS, POWER GEN)
+  // — those repeats appear to be a page footer / re-listing of certain scrips.
+  // We treat each chunk between headers as belonging to the most recent header.
+  const headerPositions: { name: string; start: number; end: number }[] = [];
+  {
+    SECTOR_HEADER_RE.lastIndex = 0;
+    let sm: RegExpExecArray | null;
+    while ((sm = SECTOR_HEADER_RE.exec(body)) !== null) {
+      headerPositions.push({
+        name: sm[1].trim(),
+        start: sm.index,
+        end: sm.index + sm[0].length,
+      });
+    }
   }
 
-  SCRIP_RE.lastIndex = 0;
-  while ((m = SCRIP_RE.exec(body)) !== null) {
-    const name = m[1].trim();
-    if (/^(?:APPAREL|AUTOMOBILE|SCRIP|LDCP|OPEN|HIGH|LOW|CURRENT|CHANGE|VOLUME)$/i.test(name)) continue;
-    if (/\b(HIGH|LOW|CURRENT|CHANGE|VOLUME|LDCP|OPEN|SCRIP)\b/.test(name)) continue;
-    if (name.length > 30) continue;
+  // For each header, slice the chunk of text up to the NEXT header (or end of body),
+  // and parse scrips within that chunk. This avoids the previous bug where a
+  // malformed scrip match would span multiple sectors and cause the sector lookup
+  // to fall back to FUTURE CONTRACTS for everything after.
+  const scrips: DirectScrip[] = [];
 
-    let sector = "OTHER";
-    for (let i = sectors.length - 1; i >= 0; i--) {
-      if (sectors[i].pos <= m.index) {
-        sector = sectors[i].name;
-        break;
+  // Dedupe by (symbol, sector) — the page sometimes lists the same scrip twice
+  // (e.g. in a "main" sector and again in a "MISCELLANEOUS" footer block).
+  // We keep the FIRST occurrence (the canonical sector).
+  const seen = new Set<string>();
+
+  for (let i = 0; i < headerPositions.length; i++) {
+    const cur = headerPositions[i];
+    const next = headerPositions[i + 1];
+    // Skip footer markers
+    if (cur.name === "END MUTUAL FUND") continue;
+
+    const chunkStart = cur.end;
+    const chunkEnd = next ? next.start : body.length;
+    const chunkText = body.slice(chunkStart, chunkEnd);
+
+    SCRIP_RE.lastIndex = 0;
+    let cm: RegExpExecArray | null;
+    while ((cm = SCRIP_RE.exec(chunkText)) !== null) {
+      const name = cm[1].trim();
+      if (looksLikeHeaderName(name)) continue;
+
+      const ldcp = toNum(cm[2]);
+      const current = toNum(cm[6]);
+      const change = Number(cm[7]);
+      const volume = toNum(cm[8]);
+      // Skip zero-volume, zero-change, and identical-OHLC rows (likely dust)
+      if (volume === 0 && change === 0 && ldcp === current) {
+        // Still include — some valid scrips have 0 volume on quiet days
       }
-    }
 
-    const ldcp = toNum(m[2]);
-    const current = toNum(m[6]);
-    const change = Number(m[7]);
-    scrips.push({
-      symbol: name,
-      ldcp,
-      open: toNum(m[3]),
-      high: toNum(m[4]),
-      low: toNum(m[5]),
-      current,
-      change,
-      changePct: ldcp > 0 ? (change / ldcp) * 100 : 0,
-      volume: toNum(m[8]),
-      sector,
-    });
+      const key = `${name}|${cur.name}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+
+      scrips.push({
+        symbol: name,
+        ldcp,
+        open: toNum(cm[3]),
+        high: toNum(cm[4]),
+        low: toNum(cm[5]),
+        current,
+        change,
+        changePct: ldcp > 0 ? (change / ldcp) * 100 : 0,
+        volume,
+        sector: cur.name,
+      });
+    }
   }
 
   return {

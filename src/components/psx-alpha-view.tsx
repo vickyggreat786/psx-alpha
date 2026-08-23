@@ -57,9 +57,7 @@ import { cn } from "@/lib/utils";
 import {
   ShieldCheck,
   Wallet,
-  Send,
   BellRing,
-  Smartphone,
   PlayCircle,
 } from "lucide-react";
 
@@ -322,9 +320,11 @@ export function PsxAlphaView() {
   const [loadingSignals, setLoadingSignals] = React.useState(true);
   const [loadingIpos, setLoadingIpos] = React.useState(true);
 
-  // Paper trading + notifications state
+  // Paper trading + alerts state
   const [portfolio, setPortfolio] = React.useState<Portfolio | null>(null);
   const [safeSignals, setSafeSignals] = React.useState<SafeSignalRow[]>([]);
+  const [nearMissSignals, setNearMissSignals] = React.useState<Array<SafeSignalRow & { missReason: string }>>([]);
+  const [safeStats, setSafeStats] = React.useState<{ total_scanned: number; total_buy: number } | null>(null);
   const [alertsLog, setAlertsLog] = React.useState<AlertLogItem[]>([]);
   const [screenerRows, setScreenerRows] = React.useState<ScreenerRow[]>([]);
   const [screenerSort, setScreenerSort] = React.useState<SortKey>("volume");
@@ -361,20 +361,6 @@ export function PsxAlphaView() {
   } | null>(null);
   const [autoExecute, setAutoExecute] = React.useState(false);
   const [executingAuto, setExecutingAuto] = React.useState(false);
-
-  // Telegram setup state
-  const [tgBotToken, setTgBotToken] = React.useState("");
-  const [tgChatId, setTgChatId] = React.useState("");
-  const [tgConfigured, setTgConfigured] = React.useState(false);
-  const [tgSaving, setTgSaving] = React.useState(false);
-
-  // Push subscription state
-  const [pushSupported] = React.useState(
-    typeof window !== "undefined" &&
-      "serviceWorker" in navigator &&
-      "PushManager" in window
-  );
-  const [pushSubscribed, setPushSubscribed] = React.useState(false);
 
   const [refreshing, setRefreshing] = React.useState(false);
 
@@ -472,12 +458,19 @@ export function PsxAlphaView() {
     }
   }, []);
 
-  // Fetch safe signals
+  // Fetch safe signals (full-scan version — scans all ~150 scrips, not just 12)
   const fetchSafeSignals = React.useCallback(async () => {
     try {
       const res = await fetch("/api/psx/safe-signals", { cache: "no-store" });
       const json = await res.json();
-      if (json.ok) setSafeSignals(json.data.safe_signals);
+      if (json.ok) {
+        setSafeSignals(json.data.safe_signals);
+        setNearMissSignals(json.data.near_misses ?? []);
+        setSafeStats({
+          total_scanned: json.data.total_scanned,
+          total_buy: json.data.total_buy,
+        });
+      }
     } catch (e) {
       console.error(e);
     }
@@ -579,17 +572,6 @@ export function PsxAlphaView() {
     }
   }, []);
 
-  // Check Telegram config
-  const checkTelegram = React.useCallback(async () => {
-    try {
-      const res = await fetch("/api/notifications/telegram", { cache: "no-store" });
-      const json = await res.json();
-      if (json.ok) setTgConfigured(json.configured);
-    } catch (e) {
-      console.error(e);
-    }
-  }, []);
-
   // Run event detection (check open positions against current prices)
   const runEventCheck = React.useCallback(async () => {
     try {
@@ -619,7 +601,6 @@ export function PsxAlphaView() {
     fetchNewListings();
     fetchPortfolio();
     fetchAlertsLog();
-    checkTelegram();
   }, [
     fetchQuote,
     fetchCandles,
@@ -634,7 +615,6 @@ export function PsxAlphaView() {
     fetchNewListings,
     fetchPortfolio,
     fetchAlertsLog,
-    checkTelegram,
   ]);
 
   // Refetch screener when sort/sector changes
@@ -680,7 +660,6 @@ export function PsxAlphaView() {
     signals: ["section-signals"],
     safe: ["section-safe"],
     portfolio: ["section-portfolio"],
-    notifications: ["section-notifications"],
     alerts: ["section-alerts"],
     extras: ["section-extras"],
   };
@@ -774,109 +753,23 @@ export function PsxAlphaView() {
     setRefreshing(false);
   };
 
-  // ---------- Push notifications ----------
-  const subscribePush = async () => {
-    if (!pushSupported) {
-      toast({
-        title: "Browser push not supported",
-        description: "Use Chrome on Android or desktop Chrome/Firefox",
-        variant: "destructive",
-      });
-      return;
-    }
+  // ---------- Test alert (logs to AlertLog table for the user to verify) ----------
+  const sendTestAlert = async () => {
     try {
-      // 1. Get VAPID public key from server
-      const vapidRes = await fetch("/api/notifications/subscribe");
-      const vapidJson = (await vapidRes.json()) as {
-        ok: boolean;
-        publicKey: string;
-      };
-      if (!vapidJson.ok) throw new Error("Could not get VAPID key");
-
-      // 2. Register SW + subscribe
-      const reg = await navigator.serviceWorker.ready;
-      const sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(vapidJson.publicKey),
-      });
-
-      // 3. Send subscription to server
-      await fetch("/api/notifications/subscribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(sub),
-      });
-
-      setPushSubscribed(true);
-      toast({
-        title: "✅ Push notifications enabled",
-        description: "You'll receive WhatsApp-style alerts even when this tab is closed",
-      });
-    } catch (e) {
-      toast({
-        title: "Could not enable push",
-        description: e instanceof Error ? e.message : "Unknown error",
-        variant: "destructive",
-      });
-    }
-  };
-
-  // ---------- Telegram setup ----------
-  const saveTelegram = async () => {
-    if (!tgBotToken.trim() || !tgChatId.trim()) {
-      toast({
-        title: "Missing info",
-        description: "Both bot token and chat ID required",
-        variant: "destructive",
-      });
-      return;
-    }
-    setTgSaving(true);
-    try {
-      const res = await fetch("/api/notifications/telegram", {
+      const res = await fetch("/api/alerts/log", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          botToken: tgBotToken.trim(),
-          chatId: tgChatId.trim(),
+          kind: "test",
+          title: "🔔 Test alert",
+          body: `If you can see this entry, the Alerts Log is working.\nFired at: ${new Date().toLocaleString("en-PK")}\n\nOnce you enable Auto-trade in Safe Setups, every position open, target hit, and stop hit will appear here automatically.`,
         }),
       });
       const json = await res.json();
       if (json.ok) {
         toast({
-          title: "✅ Telegram alerts activated",
-          description: `Bot @${json.botUsername} will send alerts`,
-        });
-        setTgConfigured(true);
-        setTgBotToken("");
-        setTgChatId("");
-      } else {
-        toast({
-          title: "Telegram setup failed",
-          description: json.error ?? "Check token and chat ID",
-          variant: "destructive",
-        });
-      }
-    } catch (e) {
-      toast({
-        title: "Network error",
-        description: "Could not reach server",
-        variant: "destructive",
-      });
-    } finally {
-      setTgSaving(false);
-    }
-  };
-
-  // ---------- Test notification ----------
-  const sendTestAlert = async () => {
-    try {
-      const res = await fetch("/api/notifications/test", { cache: "no-store" });
-      const json = await res.json();
-      if (json.ok) {
-        toast({
-          title: "🔔 Test alert sent",
-          description: `Telegram: ${json.channels.telegram ? "✅" : "❌"} · Push: ${json.channels.webpush ? "✅" : "❌"}`,
+          title: "✅ Test alert logged",
+          description: "Check the Alerts Log below — your test entry should appear at the top.",
         });
         fetchAlertsLog();
       } else {
@@ -1236,7 +1129,7 @@ export function PsxAlphaView() {
                       .filter((v, i, arr) => v && arr.indexOf(v) === i)
                       .sort()
                       .map((sec) => (
-                        <SelectItem key={sec} value={sec}>{sec}</SelectItem>
+                        <SelectItem key={sec as string} value={sec as string}>{sec as string}</SelectItem>
                       ))}
                   </SelectContent>
                 </Select>
@@ -1766,10 +1659,15 @@ export function PsxAlphaView() {
         <Card className="border-emerald-200/60 dark:border-emerald-900/60">
           <CardContent className="p-4 sm:p-5">
             <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-              <h4 className="text-sm font-semibold flex items-center gap-1.5">
-                <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                Safe BUY setups — risk-managed (≥{75}% confidence, ≥2.5:1 R/R)
-              </h4>
+              <div>
+                <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                  <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                  Safe BUY Setups — pro risk-managed screener
+                </h4>
+                <p className="text-[10px] text-muted-foreground mt-0.5">
+                  Scans <span className="font-medium tabular-nums">{safeStats?.total_scanned ?? "—"}</span> PSX-listed companies · {safeStats?.total_buy ?? "—"} show BUY bias · Thresholds: ≥75% confidence · ≥2.5:1 R/R · stop ≤8%
+                </p>
+              </div>
               <Button
                 variant={autoExecute ? "default" : "outline"}
                 size="sm"
@@ -1786,24 +1684,34 @@ export function PsxAlphaView() {
                 {autoExecute ? "Auto-trade ON" : "Enable auto-trade"}
               </Button>
             </div>
+
             {safeSignals.length === 0 ? (
-              <div className="text-sm text-muted-foreground text-center py-6">
-                No safe BUY setups detected right now — market is risky.
-                <br />
-                System shows only signals where profit potential ≥ 2.5× the
-                risk and confidence ≥ 75%.
+              <div className="rounded-lg border border-dashed border-amber-300/60 dark:border-amber-700/60 bg-amber-50/30 dark:bg-amber-950/10 p-4 text-center">
+                <ShieldCheck className="h-7 w-7 mx-auto mb-2 text-amber-500" />
+                <p className="text-sm font-medium text-amber-700 dark:text-amber-300">
+                  No A+ setups right now — market is selective.
+                </p>
+                <p className="text-[10px] text-muted-foreground mt-1 max-w-md mx-auto">
+                  The screener only shows signals where profit potential ≥ 2.5× the
+                  risk, confidence ≥ 75%, AND stop-loss is within 8%. This protects
+                  capital. Below are the closest near-miss setups for your review.
+                </p>
               </div>
             ) : (
               <div className="space-y-2">
+                <p className="text-[10px] text-emerald-700 dark:text-emerald-300 font-medium flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  {safeSignals.length} A+ safe setup{safeSignals.length === 1 ? "" : "s"} — all criteria met
+                </p>
                 {safeSignals.slice(0, 5).map((row, i) => (
                   <div
                     key={row.signal.symbol + i}
-                    className="rounded-lg border border-border/60 p-3 grid grid-cols-1 sm:grid-cols-4 gap-2 text-sm"
+                    className="rounded-lg border border-emerald-200/60 dark:border-emerald-800/60 bg-emerald-50/30 dark:bg-emerald-950/10 p-3 grid grid-cols-1 sm:grid-cols-4 gap-2 text-sm"
                   >
                     <div className="sm:col-span-1">
-                      <p className="font-semibold">{row.signal.symbol}</p>
+                      <p className="font-semibold text-emerald-700 dark:text-emerald-300">{row.signal.symbol}</p>
                       <p className="text-[10px] text-muted-foreground">
-                        {row.signal.confidence.toFixed(0)}% confidence · 1:{row.signal.riskReward.toFixed(1)} R/R
+                        {row.signal.confidence.toFixed(0)}% conf · 1:{row.signal.riskReward.toFixed(1)} R/R
                       </p>
                     </div>
                     <div className="grid grid-cols-3 gap-1 text-xs sm:col-span-2">
@@ -1839,6 +1747,49 @@ export function PsxAlphaView() {
                 <p className="text-[10px] text-muted-foreground text-center pt-2">
                   Virtual capital: Rs 1,000,000 · Max 8% per trade · Max 2.4% risk per trade
                 </p>
+              </div>
+            )}
+
+            {/* ---------- Near-miss setups — don't meet ALL criteria but worth watching ---------- */}
+            {nearMissSignals.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-border/40">
+                <p className="text-[10px] font-medium text-amber-700 dark:text-amber-300 mb-2 flex items-center gap-1.5">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                  Near-miss setups — close to qualifying (review manually before trading)
+                </p>
+                <div className="space-y-1.5">
+                  {nearMissSignals.slice(0, 5).map((row, i) => (
+                    <div
+                      key={row.signal.symbol + i}
+                      className="rounded-md border border-amber-200/40 dark:border-amber-800/40 bg-amber-50/20 dark:bg-amber-950/5 p-2.5 grid grid-cols-1 sm:grid-cols-4 gap-2 text-xs"
+                    >
+                      <div className="sm:col-span-1">
+                        <p className="font-semibold text-amber-700 dark:text-amber-300">{row.signal.symbol}</p>
+                        <p className="text-[10px] text-muted-foreground">
+                          {row.signal.confidence.toFixed(0)}% conf · 1:{row.signal.riskReward.toFixed(1)} R/R
+                        </p>
+                      </div>
+                      <div className="grid grid-cols-3 gap-1 sm:col-span-2">
+                        <div>
+                          <p className="text-[9px] text-muted-foreground">Entry</p>
+                          <p className="font-medium tabular-nums">{row.signal.entry.toFixed(2)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-muted-foreground">Stop</p>
+                          <p className="font-medium tabular-nums text-rose-600 dark:text-rose-400">{row.signal.stopLoss.toFixed(2)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[9px] text-muted-foreground">Target</p>
+                          <p className="font-medium tabular-nums text-emerald-600 dark:text-emerald-400">{row.signal.target.toFixed(2)}</p>
+                        </div>
+                      </div>
+                      <div className="sm:col-span-1 sm:text-right">
+                        <p className="text-[9px] text-muted-foreground">Why not A+</p>
+                        <p className="text-[10px] text-amber-700 dark:text-amber-300 leading-tight">{row.missReason}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
           </CardContent>
@@ -1921,150 +1872,67 @@ export function PsxAlphaView() {
         </Card>
         </div>
 
-        {/* ---------- Notification setup ---------- */}
-        <div id="section-notifications" style={{ display: isSectionVisible("section-notifications") ? undefined : "none" }}>
-        <Card className="border-border/60">
-          <CardContent className="p-4 sm:p-5">
-            <h4 className="text-sm font-semibold mb-3 flex items-center gap-1.5">
-              <BellRing className="h-4 w-4 text-violet-600 dark:text-violet-400" />
-              Notification setup — get alerts like WhatsApp even when app is closed
-            </h4>
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-              {/* Channel 1: Browser push */}
-              <div className="rounded-lg border border-border/60 p-3">
-                <div className="flex items-start justify-between gap-2 mb-2">
-                  <div>
-                    <p className="text-sm font-medium flex items-center gap-1.5">
-                      <Smartphone className="h-4 w-4" /> Browser push (Chrome Android)
-                    </p>
-                    <p className="text-[10px] text-muted-foreground mt-1">
-                      WhatsApp-style notifications on your phone, no app install
-                    </p>
-                  </div>
-                  <Badge
-                    variant="outline"
-                    className={cn(
-                      "text-[10px]",
-                      pushSupported
-                        ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"
-                        : "bg-muted text-muted-foreground"
-                    )}
-                  >
-                    {pushSupported ? "Supported" : "Unsupported"}
-                  </Badge>
-                </div>
-                <Button
-                  onClick={subscribePush}
-                  disabled={!pushSupported || pushSubscribed}
-                  size="sm"
-                  className="w-full h-8"
-                  variant={pushSubscribed ? "outline" : "default"}
-                >
-                  {pushSubscribed ? "✅ Push enabled" : "Enable push"}
-                </Button>
-              </div>
-
-              {/* Channel 2: Telegram */}
-              <div className="rounded-lg border border-border/60 p-3">
-                <div className="flex items-start justify-between gap-2 mb-2">
-                  <div>
-                    <p className="text-sm font-medium flex items-center gap-1.5">
-                      <Send className="h-4 w-4" /> Telegram alerts
-                    </p>
-                    <p className="text-[10px] text-muted-foreground mt-1">
-                      Best option — works on any phone, instant like WhatsApp
-                    </p>
-                  </div>
-                  <Badge
-                    variant="outline"
-                    className={cn(
-                      "text-[10px]",
-                      tgConfigured
-                        ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/30 dark:text-emerald-300"
-                        : "bg-muted text-muted-foreground"
-                    )}
-                  >
-                    {tgConfigured ? "Active" : "Not set"}
-                  </Badge>
-                </div>
-                {tgConfigured ? (
-                  <p className="text-xs text-emerald-600 dark:text-emerald-400 text-center py-1">
-                    ✓ Telegram alerts are active
-                  </p>
-                ) : (
-                  <div className="space-y-1.5">
-                    <Input
-                      value={tgBotToken}
-                      onChange={(e) => setTgBotToken(e.target.value)}
-                      placeholder="Bot token (from @BotFather)"
-                      className="h-8 text-xs"
-                    />
-                    <Input
-                      value={tgChatId}
-                      onChange={(e) => setTgChatId(e.target.value)}
-                      placeholder="Your chat ID (from @userinfobot)"
-                      className="h-8 text-xs"
-                    />
-                    <Button
-                      onClick={saveTelegram}
-                      disabled={tgSaving}
-                      size="sm"
-                      className="w-full h-8 bg-violet-600 hover:bg-violet-700 text-white"
-                    >
-                      {tgSaving ? "Saving…" : "Connect Telegram"}
-                    </Button>
-                    <p className="text-[10px] text-muted-foreground text-center">
-                      1) Open Telegram → search <code>@BotFather</code> → /newbot → copy token<br />
-                      2) Search <code>@userinfobot</code> → get your chat ID
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
-            <div className="mt-3 flex items-center justify-between gap-2 flex-wrap">
-              <p className="text-[10px] text-muted-foreground">
-                You'll receive alerts when: 🟢 new safe BUY signal · 🎯 target hit · 🛑 stop loss hit
-              </p>
-              <Button onClick={sendTestAlert} variant="outline" size="sm" className="h-8">
-                Send test alert
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-        </div>
-
-        {/* ---------- Recent alerts log ---------- */}
+        {/* ---------- Alerts Log ---------- */}
+        {/* Pro-level on-screen alert log — shows every paper-trade event
+            (position opened, target hit, stop hit) and any test alerts.
+            Always visible so the user can verify the log is working. */}
         <div id="section-alerts" style={{ display: isSectionVisible("section-alerts") ? undefined : "none" }}>
-        {(alertsLog?.length ?? 0) > 0 && (
           <Card className="border-border/60">
             <CardContent className="p-4 sm:p-5">
-              <h4 className="text-sm font-semibold mb-3 flex items-center gap-1.5">
-                <TrendingUp className="h-4 w-4 text-violet-600 dark:text-violet-400" />
-                Recent alerts ({(alertsLog?.length ?? 0)})
-              </h4>
-              <ul className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
-                {alertsLog.map((a) => (
-                  <li key={a.id} className="rounded-md border border-border/60 p-2 text-xs">
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium">
-                        {a.kind === "target_hit" ? "🎯" : a.kind === "stop_hit" ? "🛑" : a.kind === "new_signal" ? "🟢" : "🔔"} {a.title}
-                      </span>
-                      <span className="text-[10px] text-muted-foreground">
-                        {new Date(a.at).toLocaleString("en-PK", { dateStyle: "short", timeStyle: "short" })}
-                      </span>
-                    </div>
-                    <p className="text-[10px] text-muted-foreground mt-1 whitespace-pre-wrap">
-                      {a.body.slice(0, 200)}{a.body.length > 200 ? "…" : ""}
-                    </p>
-                    <p className="text-[9px] text-muted-foreground mt-1">
-                      Sent via: {a.channels || "none (configure a channel above)"}
-                    </p>
-                  </li>
-                ))}
-              </ul>
+              <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                  <TrendingUp className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+                  Alerts Log — paper-trade activity feed
+                </h4>
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="text-[10px]">
+                    {(alertsLog?.length ?? 0)} entr{(alertsLog?.length ?? 0) === 1 ? "y" : "ies"}
+                  </Badge>
+                  <Button onClick={sendTestAlert} variant="outline" size="sm" className="h-8">
+                    <BellRing className="h-3.5 w-3.5 mr-1" />
+                    Fire test alert
+                  </Button>
+                </div>
+              </div>
+              {(alertsLog?.length ?? 0) === 0 ? (
+                <div className="rounded-lg border border-dashed border-border/60 bg-muted/20 p-6 text-center">
+                  <TrendingUp className="h-8 w-8 mx-auto mb-2 text-muted-foreground/50" />
+                  <p className="text-sm font-medium text-muted-foreground">No alerts logged yet</p>
+                  <p className="text-[10px] text-muted-foreground mt-1 max-w-md mx-auto">
+                    Alerts appear here automatically when: 🟢 a safe BUY setup opens a paper
+                    position · 🎯 a position hits its target · 🛑 a position hits its stop loss.
+                    Click <span className="font-medium">Fire test alert</span> to verify the log is working.
+                  </p>
+                </div>
+              ) : (
+                <ul className="space-y-1.5 max-h-[400px] overflow-y-auto pr-1">
+                  {alertsLog.map((a) => (
+                    <li key={a.id} className="rounded-md border border-border/60 p-2.5 text-xs hover:bg-muted/30 transition-colors">
+                      <div className="flex items-center justify-between gap-2 mb-1">
+                        <span className="font-medium flex items-center gap-1.5">
+                          <span className={
+                            a.kind === "target_hit" ? "text-emerald-600 dark:text-emerald-400" :
+                            a.kind === "stop_hit" ? "text-rose-600 dark:text-rose-400" :
+                            a.kind === "new_signal" ? "text-emerald-600 dark:text-emerald-400" :
+                            "text-amber-600 dark:text-amber-400"
+                          }>
+                            {a.kind === "target_hit" ? "🎯" : a.kind === "stop_hit" ? "🛑" : a.kind === "new_signal" ? "🟢" : "🔔"}
+                          </span>
+                          {a.title}
+                        </span>
+                        <span className="text-[10px] text-muted-foreground tabular-nums shrink-0">
+                          {new Date(a.at).toLocaleString("en-PK", { dateStyle: "short", timeStyle: "short" })}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground whitespace-pre-wrap leading-relaxed">
+                        {a.body.slice(0, 300)}{a.body.length > 300 ? "…" : ""}
+                      </p>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </CardContent>
           </Card>
-        )}
         </div>
 
         {/* IPOs + All Indices */}
@@ -2251,7 +2119,6 @@ const NAV_ITEMS: Array<{ id: string; label: string; icon: React.ElementType }> =
   { id: "signals", label: "Trade Signals", icon: Zap },
   { id: "safe", label: "Safe Setups", icon: ShieldCheck },
   { id: "portfolio", label: "Portfolio", icon: Wallet },
-  { id: "notifications", label: "Notifications", icon: BellRing },
   { id: "alerts", label: "Alerts Log", icon: TrendingUp },
   { id: "extras", label: "IPOs + Indices", icon: Bell },
 ];
@@ -2437,17 +2304,6 @@ function LoadingShell() {
       </div>
     </div>
   );
-}
-
-function urlBase64ToUint8Array(base64String: string): Uint8Array {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const rawData = atob(base64);
-  const output = new Uint8Array(rawData.length);
-  for (let i = 0; i < rawData.length; ++i) {
-    output[i] = rawData.charCodeAt(i);
-  }
-  return output;
 }
 
 function ErrorState({ error, onRetry }: { error: string; onRetry: () => void }) {

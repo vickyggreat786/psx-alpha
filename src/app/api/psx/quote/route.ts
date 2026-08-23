@@ -9,6 +9,12 @@ import {
 } from "@/lib/zai-ratelimit";
 import { fetchPsxDirect, type DirectScrip } from "@/lib/psx-direct";
 import { saveScripDailySnapshot } from "@/lib/scrip-history";
+import {
+  LISTED_COMPANIES,
+  lookupSector,
+  lookupName,
+  stripFuturesSuffix,
+} from "@/lib/psx-listings";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -21,56 +27,6 @@ let lastError: { msg: string; at: number } | null = null;
 const CACHE_TTL_MS = 30_000;
 const STALE_CACHE_TTL_MS = 60 * 60_000;
 
-// Stock name mapping
-const STOCK_NAMES: Record<string, string> = {
-  MEBL: "Meezan Bank", PPL: "Pakistan Petroleum", OGDC: "Oil & Gas Dev Co",
-  PTC: "Pakistan Telecommunication", HBL: "Habib Bank", LUCK: "Lucky Cement",
-  ENGRO: "Engro Corporation", FFCL: "Fauji Fertilizer", UBL: "United Bank",
-  MCB: "Muslim Commercial Bank", BAHL: "Bank Al-Habib", ABL: "Allied Bank",
-  NBP: "National Bank", PSO: "Pakistan State Oil", SNGP: "Sui Northern Gas",
-  SSGC: "Sui Southern Gas", KAPCO: "Kot Addu Power", HUBC: "Hub Power",
-  POL: "Pakistan Oilfields", NRL: "National Refinery", ATRL: "Attock Refinery",
-  MLCF: "Maple Leaf Cement", FCCL: "Fauji Cement", KOHC: "Kohat Cement",
-  CHCC: "Cherat Cement", DGKC: "D.G. Khan Cement", NML: "Nishat Mills",
-  NCL: "Nishat Chunian", GATM: "Gatron Industries", INDU: "Indus Motor",
-  TRG: "TRG Pakistan", SYS: "Systems Limited", KEL: "K-Electric",
-  NESTLE: "Nestle Pakistan", UNILEVER: "Unilever", COLG: "Colgate Palmolive",
-  SEARLE: "G.D. Searle", ABOT: "Abbott Lab", GLAXO: "GlaxoSmithKline",
-  MARI: "Mari Petroleum", CNERGY: "Cnergyico", EPCL: "Engro Polymer",
-  BOP: "Bank of Punjab", BAFL: "Bank Alfalah", BIPL: "BankIslami",
-  FABL: "Fauji Fertilizer Bin Qasim", FATIMA: "Fatima Fertilizer",
-  EFERT: "Engro Fertilizer", AIRLINK: "Air Link", UNITY: "Unity Foods",
-  WAVES: "Waves Singer", ICI: "ICI Pakistan", GAL: "Ghani Global",
-  SNBL: "Soneri Bank", SILK: "Silkbank", SCB: "Standard Chartered",
-  PRL: "Pak Refinery", CSIL: "Crescent Steel", ASL: "Amreli Steels",
-  ASTL: "Amreli Steels", MUGHAL: "Mughal Iron", INIL: "International Industries",
-  LWCB: "Lowe & Rudd", ISL: "International Steels", STL: "Sitara Textiles",
-  GF: "Gadoon Textiles", KT: "Kohinoor Textiles", NAF: "Nishat Textile",
-  MFB: "Meezan Bank Fund", FSLL: "Faysal Spinning", FDPL: "Faysal Drilling",
-  GENP: "General Tyre", GANI: "Ghani Glass", SGL: "Saadi Glass",
-  TGL: "Tariq Glass", BBERG: "Babri Cotton", FZPL: "Fauji Foods",
-  NATF: "NIB Bank", AKBL: "Askari Bank", AGP: "AGP Limited",
-  FEROZ: "Ferozsons Lab", AGRO: "Agriauto Industries", HCAR: "Honda Atlas",
-  PSMC: "Pak Suzuki", TELE: "Telecard", AVNL: "Avanceon",
-  AVA: "Avanceon", GHNI: "Ghani Automobile", GAD: "Gadoon Textiles",
-  BWRL: "Bandweggy Rice", RMPL: "Rafhan Maize", MEBLF: "Meezan Bank Fund",
-  GHGL: "Ghani Glass", MOIL: "Mughal Iron", MUGHAL: "Mughal Iron",
-  SHELL: "Shell Pakistan", SPO: "Searle Pakistan", SOT: "Sotac Pharma",
-  WL: "Waves Singer", WAV: "Waves Singer", ZAH: "Zafar Textiles",
-  PPMC: "Pak Paper", DCL: "Dewan Cement", DCML: "Dewan Cement",
-  BPL: "Bestway Cement", CHBL: "Cherat Cement", FECTO: "Fecto Cement",
-  GICC: "Gul Ahmed", JAT: "Jubilee Insurance", AGIL: "Agriauto",
-  KSB: "KSB Pumps", BAW: "Bawani Air", RPL: "Ravi Pharma",
-  EFOODS: "Engro Foods", AML: "Amreli Steels", ABL: "Allied Bank",
-  BOP: "Bank of Punjab", SIN: "Sindh Energy", FDCL: "Fauji Dev",
-  GEN: "General Tyre", GIF: "Ghani Glass",
-};
-
-function getStockName(symbol: string): string {
-  const clean = symbol.split("-")[0].toUpperCase();
-  return STOCK_NAMES[clean] || clean;
-}
-
 async function fetchPsxSummary(): Promise<PsxSummary> {
   if (cached.data && Date.now() - cached.at < CACHE_TTL_MS) {
     return cached.data;
@@ -78,6 +34,10 @@ async function fetchPsxSummary(): Promise<PsxSummary> {
 
   try {
     const direct = await fetchPsxDirect();
+    // For each scrip from PSX, assign the proper sector using the curated
+    // list. Many scrips come back labelled "FUTURE CONTRACTS" because today's
+    // market summary lists them as -AUG/-SEP contracts — we map them back to
+    // their underlying's real sector (e.g. AICL-AUG → INSURANCE).
     const scrips = direct.scrips.map((s) => ({
       symbol: s.symbol,
       ldcp: s.ldcp,
@@ -88,7 +48,7 @@ async function fetchPsxSummary(): Promise<PsxSummary> {
       change: s.change,
       changePct: s.changePct,
       volume: s.volume,
-      sector: s.sector,
+      sector: lookupSector(s.symbol, s.sector),
     }));
     const indices = direct.indices.map((i) => ({
       symbol: i.symbol,
@@ -153,13 +113,16 @@ function scripToStock(s: {
   symbol: string; ldcp: number; open: number; high: number; low: number;
   current: number; change: number; changePct: number; volume: number; sector: string;
 }) {
+  const clean = stripFuturesSuffix(s.symbol).toUpperCase();
+  const name = lookupName(s.symbol) ?? clean;
   return {
     symbol: s.symbol,
-    name: getStockName(s.symbol),
-    cleanSymbol: s.symbol.split("-")[0].toUpperCase(),
+    name,
+    cleanSymbol: clean,
     price: s.current, change: s.change, changePct: s.changePct,
     volume: s.volume, bid: s.current, ask: s.current,
     high52: 0, low52: 0, ldcp: s.ldcp, open: s.open, high: s.high, low: s.low, sector: s.sector,
+    traded: true,
   };
 }
 
@@ -168,8 +131,10 @@ export async function GET() {
     const summary = await fetchPsxSummary();
     const kse100 = summary.indices.find((i) => i.symbol === "KSE100");
 
-    // DEDUP by clean symbol — keep highest volume contract per underlying
-    const seenScrips = new Map<string, typeof summary.scrips[0]>();
+    // DEDUP by clean symbol — keep highest volume contract per underlying.
+    // This collapses AICL-AUG, AICL-SEP, ... → single AICL row with the
+    // highest-volume contract's prices.
+    const seenScrips = new Map<string, typeof summary.scrips[0] & { sector: string }>();
     for (const s of summary.scrips) {
       const clean = cleanSymbol(s.symbol);
       const existing = seenScrips.get(clean);
@@ -177,13 +142,68 @@ export async function GET() {
         seenScrips.set(clean, s);
       }
     }
-    const dedupedScrips = Array.from(seenScrips.values());
 
-    const sorted = [...dedupedScrips].sort((a, b) => b.changePct - a.changePct);
-    const gainers = sorted.slice(0, 5);
-    const losers = sorted.slice(-5).reverse();
+    // Merge live traded scrips with the curated list of ALL PSX-listed
+    // companies. Stocks that did NOT trade today still appear in the result
+    // with their last-known symbol + sector, but with `traded: false` and
+    // zero OHLC. This gives the user the complete PSX listing view.
+    const liveSymbols = new Map<string, typeof summary.scrips[0] & { sector: string }>();
+    for (const [clean, s] of seenScrips.entries()) liveSymbols.set(clean, s);
 
-    const byVolume = [...dedupedScrips]
+    type MergedStock = ReturnType<typeof scripToStock> & { traded: boolean };
+    const mergedStocks: MergedStock[] = [];
+
+    // Add all listed companies (curated) — fill price from live data if traded
+    const seenInCurated = new Set<string>();
+    for (const company of LISTED_COMPANIES) {
+      const clean = company.symbol.toUpperCase();
+      if (seenInCurated.has(clean)) continue;
+      seenInCurated.add(clean);
+      const live = liveSymbols.get(clean);
+      if (live) {
+        mergedStocks.push({
+          ...scripToStock(live),
+          name: company.name,
+          sector: company.sector,
+          traded: true,
+        });
+      } else {
+        // Not traded today — show as listed but no price
+        mergedStocks.push({
+          symbol: company.symbol,
+          name: company.name,
+          cleanSymbol: clean,
+          price: 0, change: 0, changePct: 0, volume: 0,
+          bid: 0, ask: 0, high52: 0, low52: 0,
+          ldcp: 0, open: 0, high: 0, low: 0,
+          sector: company.sector,
+          traded: false,
+        });
+      }
+    }
+
+    // Also include any live-traded symbols that weren't in our curated list
+    // (e.g. brand new IPOs we haven't catalogued yet).
+    for (const [clean, s] of liveSymbols.entries()) {
+      if (!seenInCurated.has(clean)) {
+        mergedStocks.push({ ...scripToStock(s), traded: true });
+      }
+    }
+
+    // Sort: traded first by volume desc, then non-traded alphabetically
+    mergedStocks.sort((a, b) => {
+      if (a.traded && !b.traded) return -1;
+      if (!a.traded && b.traded) return 1;
+      if (a.traded && b.traded) return b.volume - a.volume;
+      return a.cleanSymbol.localeCompare(b.cleanSymbol);
+    });
+
+    // Compute gainers/losers from traded scrips only (only meaningful for those)
+    const traded = mergedStocks.filter((s) => s.traded);
+    const sortedByChange = [...traded].sort((a, b) => b.changePct - a.changePct);
+    const gainers = sortedByChange.slice(0, 5);
+    const losers = sortedByChange.slice(-5).reverse();
+    const byVolume = [...traded]
       .filter((s) => s.volume > 0)
       .sort((a, b) => b.volume - a.volume)
       .slice(0, 9);
@@ -192,20 +212,23 @@ export async function GET() {
       symbol: "KSE100", name: "KSE-100 Index", price: kse100.value,
       change: kse100.change, changePct: kse100.changePct, volume: 0,
       bid: kse100.value, ask: kse100.value, high52: 0, low52: 0,
+      traded: true, cleanSymbol: "KSE100", ldcp: 0, open: 0, high: 0, low: 0, sector: "INDEX",
     } : null;
 
     return NextResponse.json({
       ok: true,
       data: {
         indices: summary.indices,
-        // Return DEDUPED scrips (one per underlying stock, no AUG/SEP duplicates)
-        scrips: dedupedScrips.map(scripToStock),
-        uniqueUnderlyings: dedupedScrips.length,
+        // Return ALL merged stocks (live + curated, including non-traded)
+        scrips: mergedStocks,
+        totalListed: mergedStocks.length,
+        totalTraded: traded.length,
+        uniqueUnderlyings: seenScrips.size,
         featured: kse100Stock
-          ? [kse100Stock, ...byVolume.map((s) => scripToStock(s))]
-          : byVolume.map((s) => scripToStock(s)),
-        gainers: gainers.map(scripToStock),
-        losers: losers.map(scripToStock),
+          ? [kse100Stock, ...byVolume.map((s) => scripToStock(s as any))]
+          : byVolume.map((s) => scripToStock(s as any)),
+        gainers: gainers.map((s) => ({ ...s })),
+        losers: losers.map((s) => ({ ...s })),
         fetchedAt: summary.fetchedAt,
         source: summary.source,
         cacheInfo: {

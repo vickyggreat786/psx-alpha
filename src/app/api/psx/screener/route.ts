@@ -21,6 +21,8 @@ interface ScreenerRow {
   sector: string;
   buyBelow: number;
   sellAbove: number;
+  traded: boolean;
+  name: string;
 }
 
 export async function GET(req: NextRequest) {
@@ -28,10 +30,9 @@ export async function GET(req: NextRequest) {
     const url = new URL(req.url);
     const sort = url.searchParams.get("sort") ?? "volume";
     const sector = url.searchParams.get("sector");
-    // Default limit raised from 50 to 200 — PSX has ~115 scrips total,
-    // we want to show all of them by default (user reported seeing fewer
-    // stocks in app vs PSX website).
-    const limit = parseInt(url.searchParams.get("limit") ?? "200");
+    const includeAll = url.searchParams.get("all") === "1";
+    const search = url.searchParams.get("q")?.trim().toLowerCase();
+    const limit = parseInt(url.searchParams.get("limit") ?? "600");
 
     const quoteRes = await fetch(`${getBaseUrl()}/api/psx/quote`, {
       cache: "no-store",
@@ -41,6 +42,7 @@ export async function GET(req: NextRequest) {
       data?: {
         scrips: Array<{
           symbol: string;
+          name?: string;
           ldcp?: number;
           open?: number;
           high?: number;
@@ -50,6 +52,7 @@ export async function GET(req: NextRequest) {
           changePct: number;
           volume: number;
           sector?: string;
+          traded?: boolean;
         }>;
       };
       error?: string;
@@ -58,17 +61,22 @@ export async function GET(req: NextRequest) {
       throw new Error(quoteJson.error ?? "Quote unavailable");
     }
 
-    // Transform — KEEP ALL scrips (including different future contract months)
-    // so the user sees the same count as PSX. Show cleanName for display +
-    // futureMonth so the user can distinguish contracts (e.g. "CNERGY" AUG vs SEP).
-    const allRows: ScreenerRow[] = quoteJson.data.scrips
-      .filter((s) => s.volume !== undefined && s.volume !== null)
+    // Build screener rows from all scrips (live traded + curated non-traded).
+    // When includeAll=1, show all listings (incl. non-traded).
+    // When includeAll=0 (default), only show live-traded scrips.
+    let allRows: ScreenerRow[] = quoteJson.data.scrips
+      .filter((s) => includeAll || s.traded !== false)
       .filter((s) => !sector || (s.sector ?? "").toLowerCase() === sector.toLowerCase())
+      .filter((s) => !search ||
+        s.symbol.toLowerCase().includes(search) ||
+        (s.name ?? "").toLowerCase().includes(search)
+      )
       .map((s) => {
         const current = s.price;
         return {
           symbol: s.symbol,
           cleanName: cleanSymbol(s.symbol),
+          name: s.name ?? cleanSymbol(s.symbol),
           futureMonth: getFutureMonth(s.symbol),
           ldcp: s.ldcp ?? current,
           open: s.open ?? current,
@@ -81,10 +89,10 @@ export async function GET(req: NextRequest) {
           sector: s.sector ?? "OTHER",
           buyBelow: current,
           sellAbove: Math.round(current * 1.05 * 100) / 100,
+          traded: s.traded !== false,
         };
       });
 
-    // NO dedup — return all rows (matching PSX's display)
     let rows = allRows;
 
     switch (sort) {
@@ -99,7 +107,13 @@ export async function GET(req: NextRequest) {
         break;
       case "volume":
       default:
-        rows.sort((a, b) => b.volume - a.volume);
+        // Traded scrips first (by volume desc), then non-traded (alpha)
+        rows.sort((a, b) => {
+          if (a.traded && !b.traded) return -1;
+          if (!a.traded && b.traded) return 1;
+          if (a.traded && b.traded) return b.volume - a.volume;
+          return a.cleanName.localeCompare(b.cleanName);
+        });
         break;
     }
 
@@ -110,9 +124,11 @@ export async function GET(req: NextRequest) {
       data: {
         rows: rows.slice(0, limit),
         totalScanned: rows.length,
-        // Also report the deduped count for the UI to show "X unique underlyings"
+        totalListed: quoteJson.data.scrips.length,
+        totalTraded: quoteJson.data.scrips.filter((s) => s.traded !== false).length,
         uniqueUnderlyings: new Set(rows.map((r) => r.cleanName)).size,
         sectors,
+        filters: { includeAll, sector, search, sort },
         fetchedAt: new Date().toISOString(),
       },
     });
