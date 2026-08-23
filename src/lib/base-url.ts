@@ -1,12 +1,11 @@
-// Dynamic base URL — works on Vercel + local dev
 export function getBaseUrl(): string {
-  // Vercel automatically sets VERCEL_URL
-  if (process.env.VERCEL_URL) {
-    return `https://${process.env.VERCEL_URL}`;
-  }
-  // Manual override (for Vercel env var)
+  // Check NEXT_PUBLIC_BASE_URL first (our custom alias URL)
   if (process.env.NEXT_PUBLIC_BASE_URL) {
     return process.env.NEXT_PUBLIC_BASE_URL;
+  }
+  // Vercel's VERCEL_URL (deployment-specific, might not be resolvable)
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
   }
   // Local dev
   return "http://localhost:3000";
