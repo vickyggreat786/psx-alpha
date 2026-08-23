@@ -1192,7 +1192,7 @@ export function PsxAlphaView() {
           <SignalCard analysis={analysis} loading={loadingAnalysis} symbol={symbol} />
         </div>
 
-        {newListings.length > 0 && (
+        {(newListings?.length ?? 0) > 0 && (
           <div className="rounded-lg border-2 border-violet-400 bg-violet-50/60 dark:bg-violet-950/30 p-2.5 flex items-center gap-2">
             <span className="text-sm">🆕</span>
             <p className="text-xs text-violet-700 dark:text-violet-300">
@@ -1205,7 +1205,7 @@ export function PsxAlphaView() {
             <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
               <h4 className="text-sm font-semibold flex items-center gap-1.5">
                 <Activity className="h-4 w-4 text-violet-600 dark:text-violet-400" />
-                Live Stocks — Real-time prices · Buy/Sell · Volume ({screenerRows.length})
+                Live Stocks — Real-time prices · Buy/Sell · Volume ({(screenerRows?.length ?? 0)})
               </h4>
               <div className="flex items-center gap-2 flex-wrap">
                 <Input
@@ -1243,7 +1243,7 @@ export function PsxAlphaView() {
               </div>
             </div>
 
-            {screenerRows.length === 0 ? (
+            {(screenerRows?.length ?? 0) === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-6">
                 Loading live scrips from PSX…
               </p>
@@ -1341,7 +1341,7 @@ export function PsxAlphaView() {
                       )}
                     >
                       <p className="text-[10px] text-muted-foreground font-medium">ALL</p>
-                      <p className="text-lg font-bold">{analyzeAll.total}</p>
+                      <p className="text-lg font-bold">{(analyzeAll?.total ?? 0)}</p>
                     </button>
                     <button
                       onClick={() => setAnalysisFilter("BUY")}
@@ -1426,7 +1426,7 @@ export function PsxAlphaView() {
                     </table>
                   </div>
                   <p className="text-[10px] text-muted-foreground text-center pt-2">
-                    Showing {analysisFilter === "ALL" ? analyzeAll.total : analyzeAll.all.filter(a => a.action === analysisFilter).length} {analysisFilter !== "ALL" ? analysisFilter : ""} stocks · Click row to view chart + trade plan
+                    Showing {analysisFilter === "ALL" ? (analyzeAll?.total ?? 0) : (analyzeAll?.all ?? []).filter(a => a.action === analysisFilter).length} {analysisFilter !== "ALL" ? analysisFilter : ""} stocks · Click row to view chart + trade plan
                   </p>
                 </>
               ) : (
@@ -1452,7 +1452,7 @@ export function PsxAlphaView() {
               </div>
               {bestTrades ? (
                 <>
-                  {bestTrades.providers.length > 0 && (
+                  {(bestTrades?.providers?.length ?? 0) > 0 && (
                     <p className="text-[10px] text-muted-foreground mb-3">
                       AI providers: {bestTrades.providers.map(p => p.label).join(" · ")}
                     </p>
@@ -1461,7 +1461,7 @@ export function PsxAlphaView() {
                     {/* BUY trades */}
                     <div>
                       <p className="text-xs font-medium text-emerald-600 dark:text-emerald-400 mb-2">🟢 Top BUY Trades</p>
-                      {bestTrades.best_buy.length === 0 ? (
+                      {(bestTrades?.best_buy?.length ?? 0) === 0 ? (
                         <p className="text-xs text-muted-foreground text-center py-4">No BUY setups with R/R ≥ 2</p>
                       ) : (
                         <div className="space-y-2">
@@ -1474,7 +1474,7 @@ export function PsxAlphaView() {
                     {/* SELL trades */}
                     <div>
                       <p className="text-xs font-medium text-rose-600 dark:text-rose-400 mb-2">🔴 Top SELL Trades</p>
-                      {bestTrades.best_sell.length === 0 ? (
+                      {(bestTrades?.best_sell?.length ?? 0) === 0 ? (
                         <p className="text-xs text-muted-foreground text-center py-4">No SELL setups with R/R ≥ 2</p>
                       ) : (
                         <div className="space-y-2">
@@ -1737,7 +1737,7 @@ export function PsxAlphaView() {
                 Live Trade Signals — auto-scanned across top movers
               </h4>
               <span className="text-xs text-muted-foreground">
-                {loadingSignals ? "Scanning…" : `${signals.length} symbols analyzed`}
+                {loadingSignals ? "Scanning…" : `${(signals?.length ?? 0)} symbols analyzed`}
               </span>
             </div>
             {loadingSignals ? (
@@ -1746,7 +1746,7 @@ export function PsxAlphaView() {
                   <div key={i} className="h-32 rounded-lg bg-muted/40 animate-pulse" />
                 ))}
               </div>
-            ) : signals.length === 0 ? (
+            ) : (signals?.length ?? 0) === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-8">
                 No signals available
               </p>
@@ -1872,17 +1872,17 @@ export function PsxAlphaView() {
                     <p className="text-[10px] text-muted-foreground">Unrealized P&L</p>
                     <p className={cn("font-semibold tabular-nums", portfolio.unrealizedPnl >= 0 ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400")}>
                       {portfolio.unrealizedPnl >= 0 ? "+" : ""}Rs {portfolio.unrealizedPnl.toLocaleString("en-PK", { maximumFractionDigits: 0 })}
-                      <span className="text-[10px] ml-1">({portfolio.unrealizedPct >= 0 ? "+" : ""}{portfolio.unrealizedPct.toFixed(2)}%)</span>
+                      <span className="text-[10px] ml-1">({(portfolio?.unrealizedPct ?? 0) >= 0 ? "+" : ""}{(portfolio?.unrealizedPct ?? 0).toFixed(2)}%)</span>
                     </p>
                   </div>
                 </div>
-                {portfolio.positions.length === 0 ? (
+                {(portfolio?.positions?.length ?? 0) === 0 ? (
                   <p className="text-sm text-muted-foreground text-center py-4">
                     No open positions. Enable "Auto-trade" above to start trading safe signals automatically.
                   </p>
                 ) : (
                   <div className="space-y-1.5">
-                    {portfolio.positions.map((p) => {
+                    {(portfolio?.positions ?? []).map((p) => {
                       const statusClass =
                         p.status === "stop_hit"
                           ? "border-rose-300 dark:border-rose-800"
@@ -2035,12 +2035,12 @@ export function PsxAlphaView() {
 
         {/* ---------- Recent alerts log ---------- */}
         <div id="section-alerts" style={{ display: isSectionVisible("section-alerts") ? undefined : "none" }}>
-        {alertsLog.length > 0 && (
+        {(alertsLog?.length ?? 0) > 0 && (
           <Card className="border-border/60">
             <CardContent className="p-4 sm:p-5">
               <h4 className="text-sm font-semibold mb-3 flex items-center gap-1.5">
                 <TrendingUp className="h-4 w-4 text-violet-600 dark:text-violet-400" />
-                Recent alerts ({alertsLog.length})
+                Recent alerts ({(alertsLog?.length ?? 0)})
               </h4>
               <ul className="space-y-1.5 max-h-60 overflow-y-auto pr-1">
                 {alertsLog.map((a) => (
@@ -2079,7 +2079,7 @@ export function PsxAlphaView() {
                 <p className="text-sm text-muted-foreground text-center py-4">
                   Loading…
                 </p>
-              ) : ipos.length === 0 ? (
+              ) : (ipos?.length ?? 0) === 0 ? (
                 <p className="text-sm text-muted-foreground text-center py-4">
                   No recent IPO announcements
                 </p>
@@ -2413,7 +2413,7 @@ function BestTradeCard({ trade, onClick }: { trade: BestTradeRow; onClick: () =>
             ))}
           </div>
         )}
-        {a.signals.length > 0 && (
+        {a.(signals?.length ?? 0) > 0 && (
           <p className="text-[9px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 line-clamp-2">
             <span className="font-medium">Signals:</span> {a.signals.slice(0, 2).join(" · ")}
           </p>
