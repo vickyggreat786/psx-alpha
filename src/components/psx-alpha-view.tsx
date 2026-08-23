@@ -2413,7 +2413,7 @@ function BestTradeCard({ trade, onClick }: { trade: BestTradeRow; onClick: () =>
             ))}
           </div>
         )}
-        {a.(signals?.length ?? 0) > 0 && (
+        {(a.signals?.length ?? 0) > 0 && (
           <p className="text-[9px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 line-clamp-2">
             <span className="font-medium">Signals:</span> {a.signals.slice(0, 2).join(" · ")}
           </p>
