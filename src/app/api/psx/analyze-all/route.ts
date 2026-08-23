@@ -1,3 +1,4 @@
+import { getBaseUrl } from "@/lib/base-url";
 import { NextResponse } from "next/server";
 import { analyzeAllScrips, type ScripInput } from "@/lib/analysis-engine";
 import type { Candle } from "@/lib/indicators";
@@ -38,8 +39,8 @@ interface CandlesResponse {
 export async function GET() {
   try {
     const [quoteRes, candlesRes] = await Promise.all([
-      fetch("http://localhost:3000/api/psx/quote", { cache: "no-store" }),
-      fetch("http://localhost:3000/api/psx/candles", { cache: "no-store" }),
+      fetch(`${getBaseUrl()}/api/psx/quote`, { cache: "no-store" }),
+      fetch(`${getBaseUrl()}/api/psx/candles`, { cache: "no-store" }),
     ]);
     const quoteJson = (await quoteRes.json()) as QuoteResponse;
     const candlesJson = (await candlesRes.json()) as CandlesResponse;
