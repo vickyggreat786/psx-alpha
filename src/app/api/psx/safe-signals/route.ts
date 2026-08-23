@@ -1,3 +1,4 @@
+import { getBaseUrl } from "@/lib/base-url";
 import { NextResponse } from "next/server";
 import {
   DEFAULT_RISK_CONFIG,
@@ -12,7 +13,7 @@ export const maxDuration = 60;
 
 export async function GET() {
   try {
-    const signalsRes = await fetch("http://localhost:3000/api/psx/signals", {
+    const signalsRes = await fetch("" + getBaseUrl() + "/api/psx/signals", {
       cache: "no-store",
     });
     const signalsJson = (await signalsRes.json()) as {

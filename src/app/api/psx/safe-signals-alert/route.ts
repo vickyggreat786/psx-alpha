@@ -1,3 +1,4 @@
+import { getBaseUrl } from "@/lib/base-url";
 import { NextResponse } from "next/server";
 import { sendAlert } from "@/lib/notifications";
 import { formatSignalMessage, type SafeSignal } from "@/lib/risk";
@@ -16,7 +17,7 @@ interface PositionSize {
 
 export async function GET() {
   try {
-    const res = await fetch("http://localhost:3000/api/psx/safe-signals", {
+    const res = await fetch("" + getBaseUrl() + "/api/psx/safe-signals", {
       cache: "no-store",
     });
     const json = (await res.json()) as {

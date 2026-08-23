@@ -1,3 +1,4 @@
+import { getBaseUrl } from "@/lib/base-url";
 import { NextRequest, NextResponse } from "next/server";
 import { cleanSymbol, getFutureMonth } from "@/lib/symbol-utils";
 
@@ -32,7 +33,7 @@ export async function GET(req: NextRequest) {
     // stocks in app vs PSX website).
     const limit = parseInt(url.searchParams.get("limit") ?? "200");
 
-    const quoteRes = await fetch("http://localhost:3000/api/psx/quote", {
+    const quoteRes = await fetch("" + getBaseUrl() + "/api/psx/quote", {
       cache: "no-store",
     });
     const quoteJson = (await quoteRes.json()) as {

@@ -1,3 +1,4 @@
+import { getBaseUrl } from "@/lib/base-url";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 
@@ -19,7 +20,7 @@ interface QuoteResponse {
 export async function GET() {
   try {
     // Fetch current PSX scrips
-    const quoteRes = await fetch("http://localhost:3000/api/psx/quote", {
+    const quoteRes = await fetch("" + getBaseUrl() + "/api/psx/quote", {
       cache: "no-store",
     });
     const quoteJson = (await quoteRes.json()) as QuoteResponse;

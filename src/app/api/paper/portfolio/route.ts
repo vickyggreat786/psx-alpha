@@ -1,3 +1,4 @@
+import { getBaseUrl } from "@/lib/base-url";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { DEFAULT_RISK_CONFIG } from "@/lib/risk";
@@ -18,7 +19,7 @@ export async function GET() {
     });
 
     // Fetch current prices from /api/psx/quote
-    const quoteRes = await fetch("http://localhost:3000/api/psx/quote", {
+    const quoteRes = await fetch("" + getBaseUrl() + "/api/psx/quote", {
       cache: "no-store",
     });
     const quoteJson = (await quoteRes.json()) as {

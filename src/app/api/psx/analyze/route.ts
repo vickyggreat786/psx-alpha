@@ -1,3 +1,4 @@
+import { getBaseUrl } from "@/lib/base-url";
 import { NextRequest, NextResponse } from "next/server";
 import {
   callZai,
@@ -62,7 +63,7 @@ interface CandlesResponse {
 }
 
 async function fetchQuote(): Promise<QuoteResponse["data"]> {
-  const res = await fetch("http://localhost:3000/api/psx/quote", {
+  const res = await fetch("" + getBaseUrl() + "/api/psx/quote", {
     cache: "no-store",
   });
   const json = (await res.json()) as QuoteResponse;
@@ -71,7 +72,7 @@ async function fetchQuote(): Promise<QuoteResponse["data"]> {
 }
 
 async function fetchCandles(): Promise<Candle[]> {
-  const res = await fetch("http://localhost:3000/api/psx/candles", {
+  const res = await fetch("" + getBaseUrl() + "/api/psx/candles", {
     cache: "no-store",
   });
   const json = (await res.json()) as CandlesResponse;
