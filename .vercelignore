@@ -1,0 +1,12 @@
+bun.lock
+bun.lockb
+.open-next/
+.wrangler/
+*.sqlite
+*.sqlite-shm
+*.sqlite-wal
+db/
+tests/
+examples/
+mini-services/
+scripts/clear_db.ts
