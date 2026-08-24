@@ -77,8 +77,8 @@ function computePositionSize(entry: number, stopLoss: number) {
 export async function GET() {
   try {
     const [quoteRes, candlesRes] = await Promise.all([
-      fetch(`${getBaseUrl()}/api/psx/quote`, { cache: "no-store" }),
-      fetch(`${getBaseUrl()}/api/psx/candles`, { cache: "no-store" }),
+      fetch("" + getBaseUrl() + "/api/psx/quote", { cache: "no-store" }),
+      fetch("" + getBaseUrl() + "/api/psx/candles", { cache: "no-store" }),
     ]);
     const quoteJson = (await quoteRes.json()) as QuoteResponse;
     const candlesJson = (await candlesRes.json()) as CandlesResponse;

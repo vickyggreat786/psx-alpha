@@ -1,3 +1,4 @@
+import { getBaseUrl } from "@/lib/base-url";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getBaseUrl } from "@/lib/base-url";
@@ -30,15 +31,8 @@ export async function POST() {
       });
     }
 
-    if (openPositions.length === 0) {
-      return NextResponse.json({
-        ok: true,
-        data: { checked: 0, triggered: [], note: "No open positions to check" },
-      });
-    }
-
-    // 2. Fetch current prices
-    const quoteRes = await fetch(`${getBaseUrl()}/api/psx/quote`, {
+    // Fetch current prices
+    const quoteRes = await fetch("" + getBaseUrl() + "/api/psx/quote", {
       cache: "no-store",
     });
     const quoteJson = (await quoteRes.json()) as {

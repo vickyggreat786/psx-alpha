@@ -1,3 +1,4 @@
+import { getBaseUrl } from "@/lib/base-url";
 import { NextResponse } from "next/server";
 import { cleanSymbol } from "@/lib/symbol-utils";
 import { getBaseUrl } from "@/lib/base-url";
@@ -15,16 +16,11 @@ const KNOWN_SYMBOLS = new Set<string>(
 
 export async function GET() {
   try {
-    // Fetch current PSX stocks (live traded today)
-    const quoteRes = await fetch(`${getBaseUrl()}/api/psx/quote`, { cache: "no-store" });
-    const quoteJson = (await quoteRes.json()) as {
-      ok: boolean;
-      data?: {
-        scrips: { symbol: string; name?: string; sector?: string }[];
-      };
-      error?: string;
-    };
-
+    // Fetch current PSX scrips
+    const quoteRes = await fetch("" + getBaseUrl() + "/api/psx/quote", {
+      cache: "no-store",
+    });
+    const quoteJson = (await quoteRes.json()) as QuoteResponse;
     if (!quoteJson.ok || !quoteJson.data) {
       throw new Error(quoteJson.error ?? "Quote unavailable");
     }

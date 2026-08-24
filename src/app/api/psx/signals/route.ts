@@ -11,7 +11,7 @@ export const maxDuration = 60;
 export async function GET() {
   try {
     // 1. Get the quote to know what symbols to analyze
-    const quoteRes = await fetch(`${getBaseUrl()}/api/psx/quote`, {
+    const quoteRes = await fetch("" + getBaseUrl() + "/api/psx/quote", {
       cache: "no-store",
     });
     const quoteJson = (await quoteRes.json()) as {
@@ -67,7 +67,7 @@ export async function GET() {
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 30_000);
             const r = await fetch(
-              `${getBaseUrl()}/api/psx/analyze?symbol=${encodeURIComponent(sym)}`,
+              `" + getBaseUrl() + "/api/psx/analyze?symbol=${encodeURIComponent(sym)}`,
               { cache: "no-store", signal: controller.signal }
             );
             clearTimeout(timeout);

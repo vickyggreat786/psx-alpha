@@ -34,7 +34,7 @@ export async function GET(req: NextRequest) {
     const search = url.searchParams.get("q")?.trim().toLowerCase();
     const limit = parseInt(url.searchParams.get("limit") ?? "600");
 
-    const quoteRes = await fetch(`${getBaseUrl()}/api/psx/quote`, {
+    const quoteRes = await fetch("" + getBaseUrl() + "/api/psx/quote", {
       cache: "no-store",
     });
     const quoteJson = (await quoteRes.json()) as {
