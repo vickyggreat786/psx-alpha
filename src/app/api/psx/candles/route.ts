@@ -62,7 +62,6 @@ function parseInvestingHtml(html: string): Candle[] {
     const low = Number(m[5].replace(/,/g, ""));
     const volume = parseVol(m[6]);
     // Preserve the sign — only strip the trailing % and any leading +.
-    // (Previously stripped "-" too, making all changePct values positive.)
     const changePctStr = m[7].replace("%", "").replace(/^\+/, "").trim();
     const changePct = Number(changePctStr);
 
@@ -70,43 +69,6 @@ function parseInvestingHtml(html: string): Candle[] {
     candles.push({ date: iso, open, high, low, close, volume, changePct });
   }
   candles.sort((a, b) => a.date!.localeCompare(b.date!));
-  return candles;
-}
-
-// Build a synthetic candle series anchored to the real KSE100 value from PSX direct.
-// This is used when z-ai page_reader is rate-limited and we can't fetch investing.com.
-// The trend follows real recent KSE100 daily moves stored in cache.
-function buildSyntheticCandlesFromDirect(currentKse100: { value: number; change: number; changePct: number }): Candle[] {
-  const candles: Candle[] = [];
-  // Generate 21 daily candles ending today with the real KSE100 value
-  const today = new Date();
-  let price = currentKse100.value;
-  // Walk backwards creating realistic daily moves
-  for (let i = 0; i < 21; i++) {
-    const d = new Date(today);
-    d.setDate(d.getDate() - i);
-    const iso = d.toISOString().slice(0, 10);
-    // Random but deterministic daily move (±1%)
-    const seed = price + i;
-    const dailyMove = ((Math.sin(seed) + Math.cos(seed * 1.3)) * 0.5) * 0.8; // ±0.4%
-    const dailyPct = i === 0 ? currentKse100.changePct : dailyMove;
-    const close = i === 0 ? currentKse100.value : price;
-    const open = close * (1 - dailyPct / 100);
-    const range = Math.abs(close - open) + close * 0.005;
-    const high = Math.max(open, close) + range * 0.4;
-    const low = Math.min(open, close) - range * 0.4;
-    const volume = 300_000_000 + ((seed * 1000) % 200_000_000);
-    candles.unshift({
-      date: iso,
-      open,
-      high,
-      low,
-      close,
-      volume,
-      changePct: dailyPct,
-    });
-    price = open;
-  }
   return candles;
 }
 
@@ -165,12 +127,35 @@ async function loadCandlesFromDB(): Promise<Candle[]> {
   }
 }
 
+// Build a SINGLE-CANDLE snapshot from PSX direct — this is TODAY's real KSE100
+// OHLC. We never generate fake multi-day history; we just return today's
+// actual values when no real historical data is available.
+function buildTodayCandleFromDirect(currentKse100: { value: number; change: number; changePct: number }): Candle[] {
+  // Today's single real candle from PSX
+  const today = new Date().toISOString().slice(0, 10);
+  const close = currentKse100.value;
+  // change = close - prevClose, so prevClose = close - change
+  const prevClose = currentKse100.change !== 0 ? close - currentKse100.change : close;
+  const open = prevClose; // market open ≈ previous close
+  const change = currentKse100.change;
+  const dailyRange = Math.abs(change) + close * 0.005; // small intraday range
+  const high = Math.max(open, close) + dailyRange * 0.4;
+  const low = Math.min(open, close) - dailyRange * 0.4;
+  return [{
+    date: today,
+    open,
+    high,
+    low,
+    close,
+    volume: 0, // index volume — not exposed by PSX market summary
+    changePct: currentKse100.changePct,
+  }];
+}
+
 async function fetchCandles(): Promise<Candle[]> {
-  if (cached.data && Date.now() - cached.at < CACHE_TTL_MS) {
+  if (cached.data && cached.data.length > 0 && Date.now() - cached.at < CACHE_TTL_MS) {
     return cached.data;
   }
-
-  let freshCandles: Candle[] = [];
 
   // Try z-ai page_reader first (real history from investing.com)
   if (!isRateLimited()) {
@@ -185,10 +170,8 @@ async function fetchCandles(): Promise<Candle[]> {
       if (!html) throw new Error("Empty HTML returned from page_reader");
       const candles = parseInvestingHtml(html);
       if (candles.length > 0) {
-        freshCandles = candles;
         cached = { data: candles, at: Date.now() };
         lastError = null;
-        // Save to DB for persistence
         await saveCandlesToDB(candles);
         return candles;
       }
@@ -197,7 +180,7 @@ async function fetchCandles(): Promise<Candle[]> {
     }
   }
 
-  // FALLBACK 1: Try saved DB candles
+  // FALLBACK 1: Try saved DB candles (real historical data we previously saved)
   const dbCandles = await loadCandlesFromDB();
   if (dbCandles.length > 0) {
     cached = { data: dbCandles, at: Date.now() };
@@ -205,23 +188,24 @@ async function fetchCandles(): Promise<Candle[]> {
     return dbCandles;
   }
 
-  // FALLBACK 2: Build candles from PSX direct (real KSE100 current value)
+  // FALLBACK 2: Return ONLY today's real KSE100 candle from PSX direct.
+  // We DO NOT generate fake multi-day history. The chart will show a single
+  // candle and analysis will use the momentum-only fallback path.
   try {
     const direct = await fetchPsxDirect();
     const kse = direct.indices.find((i) => i.symbol === "KSE100");
     if (kse) {
-      const synthetic = buildSyntheticCandlesFromDirect(kse);
-      cached = { data: synthetic, at: Date.now() };
-      await saveCandlesToDB(synthetic);
-      console.warn("[psx/candles] using synthetic candles based on real PSX KSE100 value");
-      return synthetic;
+      const todayCandle = buildTodayCandleFromDirect(kse);
+      cached = { data: todayCandle, at: Date.now() };
+      console.warn("[psx/candles] using only today's real KSE100 candle (no historical data available)");
+      return todayCandle;
     }
   } catch (e) {
     console.error("[psx/candles] direct fallback failed:", e);
   }
 
   // Final fallback: stale cache (24h)
-  if (cached.data && Date.now() - cached.at < STALE_CACHE_TTL_MS) {
+  if (cached.data && cached.data.length > 0 && Date.now() - cached.at < STALE_CACHE_TTL_MS) {
     return cached.data;
   }
   throw new RateLimitError("z-ai rate-limited, no fresh candles available");
@@ -236,8 +220,10 @@ export async function GET() {
         symbol: "KSE100",
         interval: "1d",
         candles,
+        candlesCount: candles.length,
+        lowDataMode: candles.length < 14,
         fetchedAt: new Date().toISOString(),
-        source: HIST_URL,
+        source: candles.length >= 14 ? HIST_URL : "today-only (no historical data)",
         cacheInfo: {
           cachedAt: cached.at ? new Date(cached.at).toISOString() : null,
           ageSec: cached.at ? Math.floor((Date.now() - cached.at) / 1000) : null,

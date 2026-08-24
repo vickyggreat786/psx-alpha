@@ -305,7 +305,10 @@ async function callGLM(prompt: string): Promise<string> {
       setTimeout(() => reject(new Error("GLM-4 timeout after 10s")), 10_000)
     ),
   ]);
-  return completion.choices[0]?.message?.content ?? "";
+  return (
+    (completion as { choices?: Array<{ message?: { content?: string } }> })
+      ?.choices?.[0]?.message?.content ?? ""
+  );
 }
 
 // ---------- Google Gemini 2.0 Flash — FREE, globally available ----------

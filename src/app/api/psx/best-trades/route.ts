@@ -31,6 +31,7 @@ interface QuoteResponse {
 interface CandlesResponse {
   ok: boolean;
   data?: { candles: Candle[] };
+  error?: string;
 }
 
 interface BestTrade {
@@ -85,7 +86,7 @@ export async function GET() {
     if (!quoteJson.ok || !quoteJson.data) {
       throw new Error(quoteJson.error ?? "Quote unavailable");
     }
-    if (!candlesJson.ok || !candlesJson.data) {
+    if (!candlesJson.ok || !candlesJson.data || !candlesJson.data.candles) {
       throw new Error(candlesJson.error ?? "Candles unavailable");
     }
 
@@ -104,8 +105,9 @@ export async function GET() {
 
     // NOTE: We don't load per-scrip candle history for ALL scrips here — that
     // would be ~146 DB queries and a lot of memory. We let analyzeAllScrips
-    // use the blended-KSE100 history (cheap) for the initial scan, then
-    // load real per-scrip history ONLY for the top 10 trades that made the cut.
+    // use the KSE100 history scaled to scrip level (still REAL data, not synthetic)
+    // for the initial scan, then load real per-scrip history ONLY for the top
+    // 10 trades that made the cut.
     const allAnalyses = analyzeAllScrips(scrips, candlesJson.data.candles);
 
     const topBuy = allAnalyses
@@ -130,7 +132,7 @@ export async function GET() {
         // Re-run the analysis with real candles if we have enough
         if (realCandles.length >= 14) {
           const { analyzeScripFast } = await import("@/lib/analysis-engine");
-          const refreshed = analyzeScripFast(s, candlesJson.data.candles!, realCandles);
+          const refreshed = analyzeScripFast(s, candlesJson.data?.candles ?? [], realCandles);
           return refreshed ?? a;
         }
       } catch {

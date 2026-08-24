@@ -337,6 +337,8 @@ export function PsxAlphaView() {
     buy_count: number;
     sell_count: number;
     hold_count: number;
+    low_data_count?: number;
+    full_data_count?: number;
     top_buy: ScripAnalysisRow[];
     top_sell: ScripAnalysisRow[];
     all: ScripAnalysisRow[];
@@ -796,44 +798,40 @@ export function PsxAlphaView() {
     if (safeSignals.length === 0) return;
     const top = safeSignals[0];
     if (!top) return;
-    // Check if already holding
+    // Check if already holding the top safe signal's symbol
     const alreadyHolding = portfolio?.positions.some(
       (p) => p.symbol === top.signal.symbol
     );
     if (alreadyHolding) return;
-    // Execute
+    // Execute — the /api/paper/auto endpoint fetches safe signals itself
+    // and opens positions for symbols the user doesn't already hold. No
+    // need to pass the signal details in the body.
     (async () => {
       setExecutingAuto(true);
       try {
         const res = await fetch("/api/paper/auto", {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            action: "BUY",
-            symbol: top.signal.symbol,
-            confidence: top.signal.confidence,
-            entry: top.signal.entry,
-            stopLoss: top.signal.stopLoss,
-            target: top.signal.target,
-            price: top.signal.price,
-            aiSummary: top.signal.aiSummary,
-          }),
         });
         const json = await res.json();
         if (json.ok) {
-          toast({
-            title: "🟢 Auto BUY executed",
-            description: `${top.signal.symbol} — ${json.data.position.qty} shares @ ${top.signal.entry.toFixed(2)}`,
-          });
-          await Promise.all([
-            fetchPortfolio(),
-            fetchAlertsLog(),
-          ]);
-        } else if (json.error !== "Already holding " + top.signal.symbol) {
-          // Don't toast "already holding" — it's expected
+          const opened = json.data?.opened ?? [];
+          if (opened.length > 0) {
+            const o = opened[0];
+            toast({
+              title: "🟢 Auto BUY executed",
+              description: `${o.symbol} — ${o.qty} shares @ ${o.entry.toFixed(2)}`,
+            });
+            await Promise.all([
+              fetchPortfolio(),
+              fetchAlertsLog(),
+            ]);
+          }
+          // If no new positions opened, it's because we already hold all
+          // safe signals — no toast needed (expected behavior).
+        } else {
           toast({
             title: "Auto-exec skipped",
-            description: json.error ?? "Unknown",
+            description: json.error ?? json.data?.note ?? "Unknown",
             variant: "destructive",
           });
         }
@@ -1266,6 +1264,18 @@ export function PsxAlphaView() {
                       <p className="text-[10px] text-amber-700 dark:text-amber-300 font-medium">🟡 HOLD</p>
                       <p className="text-lg font-bold text-amber-700 dark:text-amber-300">{analyzeAll.hold_count}</p>
                     </button>
+                  </div>
+
+                  {/* Honest data-mode indicator — shows how many scrips have full vs limited history */}
+                  <div className="rounded-md border border-blue-200/50 dark:border-blue-900/50 bg-blue-50/30 dark:bg-blue-950/10 p-2 mb-3 flex items-start gap-2 text-[10px]">
+                    <Activity className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400 mt-0.5 shrink-0" />
+                    <div className="text-muted-foreground leading-relaxed">
+                      <span className="font-medium text-blue-700 dark:text-blue-300">Honest analysis mode:</span>{" "}
+                      {(analyzeAll?.full_data_count ?? 0) > 0
+                        ? <><strong className="tabular-nums">{analyzeAll?.full_data_count}</strong> scrips have ≥14 days of real history (full RSI/MACD/SMA/BB/patterns). <strong className="tabular-nums">{analyzeAll?.low_data_count ?? 0}</strong> use momentum-only fallback (today's real OHLC). As the app accumulates daily snapshots, more scrips switch to full mode.</>
+                        : <><strong className="tabular-nums">{analyzeAll?.low_data_count ?? 0}</strong> scrips analyzed using momentum-only mode (today's real OHLC + LDCP). No synthetic history — every number is real. Full RSI/MACD/SMA/BB indicators activate after 14 days of accumulated snapshots.</>
+                      }
+                    </div>
                   </div>
 
                   {/* Full sortable table filtered by action */}

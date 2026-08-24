@@ -102,6 +102,8 @@ export async function GET() {
         buy_count: analyses.filter((a) => a.action === "BUY").length,
         sell_count: analyses.filter((a) => a.action === "SELL").length,
         hold_count: analyses.filter((a) => a.action === "HOLD").length,
+        low_data_count: analyses.filter((a) => a.lowDataMode).length,
+        full_data_count: analyses.filter((a) => !a.lowDataMode).length,
         top_buy: buySignals,
         top_sell: sellSignals,
         top_hold: holdSignals,

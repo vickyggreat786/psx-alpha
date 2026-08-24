@@ -12,7 +12,7 @@ import {
   type IndicatorSnapshot,
 } from "@/lib/indicators";
 import { detectPatterns, buildCompositeSignal, type CompositeSignal } from "@/lib/patterns";
-import { analyzeScripFast, blendHistory, type ScripInput } from "@/lib/analysis-engine";
+import { analyzeScripFast, buildRealCandles, type ScripInput } from "@/lib/analysis-engine";
 import { loadScripCandles, todayCandleFromQuote } from "@/lib/scrip-history";
 import { cleanSymbol } from "@/lib/symbol-utils";
 
@@ -171,7 +171,8 @@ Write a direct, plain-language explanation. Mention 2-3 specific indicators. Agr
       })
     );
     return (
-      completion.choices[0]?.message?.content ??
+      (completion as { choices?: Array<{ message?: { content?: string } }> })
+        ?.choices?.[0]?.message?.content ??
       buildTechnicalFallback(symbol, composite)
     );
   } catch (e) {
@@ -271,21 +272,76 @@ export async function GET(req: NextRequest) {
       if (realHistory.length >= 14) {
         // We have enough real per-scrip history — use it directly.
         candles = realHistory;
-        source = `psx-direct (DB) + today quote (${realHistory.length} candles)`;
+        source = `real per-scrip DB history (${realHistory.length} candles)`;
+      } else if (realHistory.length >= 2) {
+        // Some real history but less than 14 days — use what we have.
+        // Indicators will fall back to momentum-only mode automatically.
+        candles = realHistory;
+        source = `partial real history (${realHistory.length} candles, momentum-only analysis)`;
       } else {
-        // Not enough real history yet (first run, or new IPO). Fall back to
-        // blended history so the chart + indicators still work. Once enough
-        // days of snapshots accumulate (>= 14), real history takes over.
-        // Use analyzeScripFast from the same engine as analyze-all
-        const fastResult = analyzeScripFast(scripInput, kse100Candles);
-        if (!fastResult) throw new Error("Not enough data for analysis");
-        // Use the SAME blendHistory from analysis-engine (ensures consistency with analyze-all)
-        candles = blendHistory(kse100Candles, scripInput);
-        source = `blended KSE100 + scrip bias (${candles.length} candles)`;
+        // No DB history. Use REAL KSE100 history scaled to scrip level
+        // (still 100% real public market data — not synthetic). If we don't
+        // have KSE100 history either, buildRealCandles returns ONLY today's
+        // real OHLC and the chart will show a single candle.
+        candles = buildRealCandles(kse100Candles, scripInput);
+        source = candles.length >= 14
+          ? `real KSE100 history scaled to ${resolvedSymbol} (${candles.length} candles)`
+          : `today's real OHLC only — insufficient history for multi-day indicators`;
       }
     }
     const snap = computeSnapshot(candles);
-    if (!snap) throw new Error("Not enough data for analysis");
+    // When we don't have enough real candles (snap is null), use the honest
+    // momentum-only fallback from analyzeScripFast. The chart shows real
+    // candles; the analysis is honest about its limited scope.
+    if (!snap) {
+      // Build the honest momentum-only analysis from today's real OHLC.
+      // This requires the scrip input (not for KSE100, which always has
+      // enough history from investing.com / DB).
+      if (symbol === "KSE100") {
+        throw new Error("Not enough data for KSE100 analysis");
+      }
+      const quoteScrips = quote.scrips;
+      let scrip = quoteScrips.find((s) => s.symbol === resolvedSymbol);
+      if (!scrip) {
+        const targetClean = cleanSymbol(resolvedSymbol).toUpperCase();
+        scrip = quoteScrips.find((s) => cleanSymbol(s.symbol).toUpperCase() === targetClean);
+      }
+      if (!scrip) throw new Error(`Symbol ${symbol} not found`);
+      const scripInput: ScripInput = {
+        symbol: scrip.symbol,
+        price: scrip.price,
+        ldcp: scrip.ldcp ?? scrip.price,
+        open: scrip.open ?? scrip.price,
+        high: scrip.high ?? scrip.price,
+        low: scrip.low ?? scrip.price,
+        volume: scrip.volume,
+        sector: scrip.sector,
+        changePct: scrip.changePct,
+        change: scrip.change,
+      };
+      const fallback = analyzeScripFast(scripInput, kse100Candles);
+      if (!fallback) throw new Error("Not enough data for analysis");
+      const result: AnalysisCache = {
+        composite: {
+          action: fallback.action,
+          confidence: fallback.confidence,
+          reasons: fallback.signals,
+          entry: fallback.entry,
+          stopLoss: fallback.stopLoss,
+          target: fallback.target,
+          riskReward: fallback.riskReward,
+        },
+        indicators: fallback.indicators,
+        patterns: fallback.patterns,
+        aiSummary: `[Momentum-only analysis — ${fallback.candlesCount} candle(s) of real history] ${fallback.signals[0]}`,
+        candles,
+        source: source + " (low-data mode)",
+        at: Date.now(),
+      };
+      cache.set(resolvedSymbol, result);
+      if (resolvedSymbol !== symbol) cache.set(symbol, result);
+      return NextResponse.json({ ok: true, data: result, cached: false });
+    }
     const patterns = detectPatterns(candles);
     const composite = buildCompositeSignal(snap, patterns);
 
