@@ -14,6 +14,8 @@ import {
 import { detectPatterns, buildCompositeSignal, type CompositeSignal } from "@/lib/patterns";
 import { analyzeScripFast, buildRealCandles, type ScripInput } from "@/lib/analysis-engine";
 import { loadScripCandles, todayCandleFromQuote } from "@/lib/scrip-history";
+import { fetchYahooCandles } from "@/lib/yahoo-finance";
+import { stripFuturesSuffix } from "@/lib/psx-listings";
 import { cleanSymbol } from "@/lib/symbol-utils";
 
 export const dynamic = "force-dynamic";
@@ -260,33 +262,65 @@ export async function GET(req: NextRequest) {
         change: scrip.change,
       };
 
-      // ----- REAL per-scrip candle history (DB-backed) -----
-      // Load historical candles saved from previous days' PSX snapshots,
-      // then overlay today's real-time OHLC from the current quote.
-      const todayCandle = todayCandleFromQuote(scrip);
-      const realHistory = await loadScripCandles(symbol, {
-        limit: 90,
-        appendToday: todayCandle,
-      });
+      // ----- REAL per-scrip candle history (priority: Yahoo Finance → DB → fallback) -----
+      // Try Yahoo Finance first — gives real OHLCV per scrip (not scaled, not synthetic)
+      let yahooCandles: Candle[] = [];
+      try {
+        yahooCandles = await fetchYahooCandles(resolvedSymbol, "6mo");
+      } catch (e) {
+        console.warn(`[analyze] Yahoo fetch failed for ${resolvedSymbol}:`, e);
+      }
 
-      if (realHistory.length >= 14) {
-        // We have enough real per-scrip history — use it directly.
-        candles = realHistory;
-        source = `real per-scrip DB history (${realHistory.length} candles)`;
-      } else if (realHistory.length >= 2) {
-        // Some real history but less than 14 days — use what we have.
-        // Indicators will fall back to momentum-only mode automatically.
-        candles = realHistory;
-        source = `partial real history (${realHistory.length} candles, momentum-only analysis)`;
+      // Today's real OHLC from PSX quote (more accurate than Yahoo's 15-min delay)
+      const todayCandle = todayCandleFromQuote(scrip);
+
+      if (yahooCandles.length >= 14) {
+        // We have enough real Yahoo history — overlay today's real OHLC on the last candle
+        const lastIdx = yahooCandles.length - 1;
+        const today = new Date().toISOString().slice(0, 10);
+        if (yahooCandles[lastIdx].date === today) {
+          // Yahoo has today's candle — overlay with PSX's fresher values
+          yahooCandles[lastIdx] = {
+            ...yahooCandles[lastIdx],
+            ...todayCandle,
+          };
+        } else {
+          // Yahoo's last candle is from yesterday — append today
+          yahooCandles.push({ date: today, ...todayCandle });
+        }
+        candles = yahooCandles;
+        source = `Yahoo Finance real history (${yahooCandles.length} candles)`;
+      } else if (yahooCandles.length >= 2) {
+        // Some Yahoo history but less than 14 days — use what we have + today
+        const today = new Date().toISOString().slice(0, 10);
+        const lastIdx = yahooCandles.length - 1;
+        if (yahooCandles[lastIdx].date === today) {
+          yahooCandles[lastIdx] = { ...yahooCandles[lastIdx], ...todayCandle };
+        } else {
+          yahooCandles.push({ date: today, ...todayCandle });
+        }
+        candles = yahooCandles;
+        source = `partial Yahoo history (${yahooCandles.length} candles, momentum-only analysis)`;
       } else {
-        // No DB history. Use REAL KSE100 history scaled to scrip level
-        // (still 100% real public market data — not synthetic). If we don't
-        // have KSE100 history either, buildRealCandles returns ONLY today's
-        // real OHLC and the chart will show a single candle.
-        candles = buildRealCandles(kse100Candles, scripInput);
-        source = candles.length >= 14
-          ? `real KSE100 history scaled to ${resolvedSymbol} (${candles.length} candles)`
-          : `today's real OHLC only — insufficient history for multi-day indicators`;
+        // Yahoo failed or empty — try DB history (saved from previous PSX snapshots)
+        const realHistory = await loadScripCandles(symbol, {
+          limit: 90,
+          appendToday: todayCandle,
+        });
+
+        if (realHistory.length >= 14) {
+          candles = realHistory;
+          source = `real per-scrip DB history (${realHistory.length} candles)`;
+        } else if (realHistory.length >= 2) {
+          candles = realHistory;
+          source = `partial real history (${realHistory.length} candles, momentum-only analysis)`;
+        } else {
+          // Last resort: KSE100 scaled to scrip level (still 100% real data, not synthetic)
+          candles = buildRealCandles(kse100Candles, scripInput);
+          source = candles.length >= 14
+            ? `real KSE100 history scaled to ${resolvedSymbol} (${candles.length} candles)`
+            : `today's real OHLC only — insufficient history for multi-day indicators`;
+        }
       }
     }
     const snap = computeSnapshot(candles);

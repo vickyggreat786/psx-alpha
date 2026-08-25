@@ -330,6 +330,7 @@ export function PsxAlphaView() {
   const [screenerSort, setScreenerSort] = React.useState<SortKey>("volume");
   const [screenerSector, setScreenerSector] = React.useState<string>("");
   const [screenerFilter, setScreenerFilter] = React.useState<string>("");
+  const [screenerIncludeAll, setScreenerIncludeAll] = React.useState<boolean>(false);
   const [activeSection, setActiveSection] = React.useState<string>("overview");
   // AI ensemble + best trades state
   const [analyzeAll, setAnalyzeAll] = React.useState<{
@@ -420,6 +421,7 @@ export function PsxAlphaView() {
     async (sym: string) => {
       setLoadingAnalysis(true);
       try {
+        // Fetch analysis (indicators + AI summary + DB-cached candles)
         const res = await fetch(
           `/api/psx/analyze?symbol=${encodeURIComponent(sym)}`,
           { cache: "no-store" }
@@ -430,6 +432,34 @@ export function PsxAlphaView() {
           // Extract per-scrip candles for chart (non-KSE100)
           if (json.data.candles && json.data.candles.length > 0) {
             setAnalysisCandles(json.data.candles);
+          }
+
+          // For non-KSE100 scrips, also fetch REAL Yahoo Finance historical
+          // candles so the chart shows real history (not just scaled KSE100).
+          // This gives the user true per-scrip OHLCV history.
+          if (sym !== "KSE100") {
+            (async () => {
+              try {
+                const cdRes = await fetch(
+                  `/api/psx/candles?symbol=${encodeURIComponent(sym)}&range=3mo`,
+                  { cache: "no-store" }
+                );
+                const cdJson = await cdRes.json();
+                if (
+                  cdJson.ok &&
+                  cdJson.data &&
+                  cdJson.data.candles &&
+                  cdJson.data.candles.length > 0
+                ) {
+                  // Prefer Yahoo's real history if we got at least 5 candles
+                  if (cdJson.data.candles.length >= 5) {
+                    setAnalysisCandles(cdJson.data.candles);
+                  }
+                }
+              } catch (e) {
+                console.warn("Failed to fetch Yahoo candles for chart:", e);
+              }
+            })();
           }
         } else {
           toast({
@@ -496,8 +526,10 @@ export function PsxAlphaView() {
   // Fetch screener rows (all scrips with full OHLCV + buy/sell ref)
   const fetchScreener = React.useCallback(async () => {
     try {
-      const params = new URLSearchParams({ limit: "200", sort: screenerSort });
+      const params = new URLSearchParams({ limit: "300", sort: screenerSort });
       if (screenerSector) params.set("sector", screenerSector);
+      if (screenerIncludeAll) params.set("all", "1");
+      if (screenerFilter.trim()) params.set("q", screenerFilter.trim());
       const res = await fetch(
         `/api/psx/screener?${params.toString()}`,
         { cache: "no-store" }
@@ -507,7 +539,7 @@ export function PsxAlphaView() {
     } catch (e) {
       console.error(e);
     }
-  }, [screenerSort, screenerSector]);
+  }, [screenerSort, screenerSector, screenerIncludeAll, screenerFilter]);
 
   // Fetch 24/7 connection status (market open/closed + psx/investing health)
   const fetchConnectionStatus = React.useCallback(async () => {
@@ -1196,6 +1228,20 @@ export function PsxAlphaView() {
                       ))}
                   </SelectContent>
                 </Select>
+                <button
+                  onClick={() => setScreenerIncludeAll((v) => !v)}
+                  className={cn(
+                    "h-8 px-2.5 rounded text-[10px] font-medium border transition-colors whitespace-nowrap",
+                    screenerIncludeAll
+                      ? "bg-violet-600 text-white border-violet-600 hover:bg-violet-700"
+                      : "bg-background text-muted-foreground border-border/60 hover:bg-muted/40"
+                  )}
+                  title={screenerIncludeAll
+                    ? "Showing all PSX-listed companies (including non-traded)"
+                    : "Showing only today's traded scrips — click to show all 296 listed companies"}
+                >
+                  {screenerIncludeAll ? "✓ All listed" : "Traded only"}
+                </button>
               </div>
             </div>
 

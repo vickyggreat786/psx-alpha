@@ -433,6 +433,39 @@ export const LISTED_COMPANIES: ListedCompany[] = [
   { symbol: "BWRL", name: "Bawair Woollen", sector: "WOOLLEN" },
   { symbol: "GAD", name: "Gadoon Woollen", sector: "WOOLLEN" },
   { symbol: "MOD", name: "Mod Woollen", sector: "WOOLLEN" },
+  { symbol: "BNL", name: "Bannu Woollen", sector: "WOOLLEN" },
+
+  // ============== EXTRA — discovered from live PSX trading ==============
+  // These are underlyings seen in today's PSX market summary (as futures contracts
+  // -AUG/-SEP) but not in our curated list above. Added here so they get proper
+  // sector mapping instead of falling back to "FUTURE CONTRACTS".
+  { symbol: "AGHA", name: "Agha Steel Mills", sector: "ENGINEERING" },
+  { symbol: "ASL", name: "Amreli Steels", sector: "ENGINEERING" },
+  { symbol: "BECO", name: "Beco Industries", sector: "ENGINEERING" },
+  { symbol: "BML", name: "Bawair Metal Industries", sector: "ENGINEERING" },
+  { symbol: "CPHL", name: "Cypress Pharma", sector: "PHARMACEUTICALS" },
+  { symbol: "CSIL", name: "Crescent Steel", sector: "ENGINEERING" },
+  { symbol: "ENGROH", name: "Engro Holdings", sector: "MISCELLANEOUS" },
+  { symbol: "FCL", name: "Fecto Cement", sector: "CEMENT" },
+  { symbol: "FFL", name: "Fauji Foods", sector: "FOOD & PERSONAL CARE PRODUCTS" },
+  { symbol: "GCIL", name: "Ghani Chemical Industries", sector: "CHEMICAL" },
+  { symbol: "GGL", name: "Ghani Glass Limited", sector: "GLASS & CERAMICS" },
+  { symbol: "HMB", name: "Honda Atlas Bikes", sector: "AUTOMOBILE PARTS & ACCESSORIES" },
+  { symbol: "ILP", name: "International Leasing Corp", sector: "LEASING COMPANIES" },
+  { symbol: "JVDC", name: "JDW Cotton", sector: "TEXTILE COMPOSITE" },
+  { symbol: "KOSM", name: "Kohinoor Spinning", sector: "TEXTILE SPINNING" },
+  { symbol: "LOADS", name: "Loads Limited", sector: "AUTOMOBILE PARTS & ACCESSORIES" },
+  { symbol: "LOTCHEM", name: "Lotus Chemical", sector: "CHEMICAL" },
+  { symbol: "MDTL", name: "Midland Textile", sector: "TEXTILE SPINNING" },
+  { symbol: "PACE", name: "Pace (Pakistan) Limited", sector: "PROPERTY" },
+  { symbol: "PIAHCLA", name: "PIAC Holding", sector: "TRANSPORT" },
+  { symbol: "PIBTL", name: "Pakvision Industrial", sector: "PROPERTY" },
+  { symbol: "SAZEW", name: "Sazew Engineering", sector: "ENGINEERING" },
+  { symbol: "SLGL", name: "Sialkot Glass", sector: "GLASS & CERAMICS" },
+  { symbol: "THCCL", name: "Thatta Cement", sector: "CEMENT" },
+  { symbol: "TOMCL", name: "TOM Investment", sector: "MISCELLANEOUS" },
+  { symbol: "TPLRF1", name: "TPL Refinery 1", sector: "REFINERY" },
+  { symbol: "TREET", name: "Treet Battery", sector: "AUTOMOBILE PARTS & ACCESSORIES" },
 ];
 
 // Lookup map: symbol → sector (for futures-contract deduping).

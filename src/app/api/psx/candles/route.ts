@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import type { Candle } from "@/lib/indicators";
 import {
   callZai,
@@ -8,6 +8,8 @@ import {
 } from "@/lib/zai-ratelimit";
 import { fetchPsxDirect } from "@/lib/psx-direct";
 import { db } from "@/lib/db";
+import { fetchYahooCandles } from "@/lib/yahoo-finance";
+import { stripFuturesSuffix } from "@/lib/psx-listings";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -61,7 +63,6 @@ function parseInvestingHtml(html: string): Candle[] {
     const high = Number(m[4].replace(/,/g, ""));
     const low = Number(m[5].replace(/,/g, ""));
     const volume = parseVol(m[6]);
-    // Preserve the sign — only strip the trailing % and any leading +.
     const changePctStr = m[7].replace("%", "").replace(/^\+/, "").trim();
     const changePct = Number(changePctStr);
 
@@ -73,12 +74,12 @@ function parseInvestingHtml(html: string): Candle[] {
 }
 
 // Persist candles to DB so we build up a real historical database over time
-async function saveCandlesToDB(candles: Candle[]): Promise<void> {
+async function saveCandlesToDB(symbol: string, candles: Candle[]): Promise<void> {
   try {
     for (const c of candles) {
       if (!c.date) continue;
       await db.candleHistory.upsert({
-        where: { symbol_date: { symbol: "KSE100", date: c.date } },
+        where: { symbol_date: { symbol, date: c.date } },
         update: {
           open: c.open,
           high: c.high,
@@ -88,7 +89,7 @@ async function saveCandlesToDB(candles: Candle[]): Promise<void> {
           changePct: c.changePct ?? 0,
         },
         create: {
-          symbol: "KSE100",
+          symbol,
           date: c.date,
           open: c.open,
           high: c.high,
@@ -97,7 +98,7 @@ async function saveCandlesToDB(candles: Candle[]): Promise<void> {
           volume: c.volume,
           changePct: c.changePct ?? 0,
         },
-      });
+      }).catch(() => null);
     }
   } catch (e) {
     console.error("[psx/candles] DB save error:", e);
@@ -105,10 +106,10 @@ async function saveCandlesToDB(candles: Candle[]): Promise<void> {
 }
 
 // Load saved candles from DB (for when z-ai is rate-limited)
-async function loadCandlesFromDB(): Promise<Candle[]> {
+async function loadCandlesFromDB(symbol: string): Promise<Candle[]> {
   try {
     const rows = await db.candleHistory.findMany({
-      where: { symbol: "KSE100" },
+      where: { symbol },
       orderBy: { date: "asc" },
       take: 90, // last 90 days
     });
@@ -127,32 +128,7 @@ async function loadCandlesFromDB(): Promise<Candle[]> {
   }
 }
 
-// Build a SINGLE-CANDLE snapshot from PSX direct — this is TODAY's real KSE100
-// OHLC. We never generate fake multi-day history; we just return today's
-// actual values when no real historical data is available.
-function buildTodayCandleFromDirect(currentKse100: { value: number; change: number; changePct: number }): Candle[] {
-  // Today's single real candle from PSX
-  const today = new Date().toISOString().slice(0, 10);
-  const close = currentKse100.value;
-  // change = close - prevClose, so prevClose = close - change
-  const prevClose = currentKse100.change !== 0 ? close - currentKse100.change : close;
-  const open = prevClose; // market open ≈ previous close
-  const change = currentKse100.change;
-  const dailyRange = Math.abs(change) + close * 0.005; // small intraday range
-  const high = Math.max(open, close) + dailyRange * 0.4;
-  const low = Math.min(open, close) - dailyRange * 0.4;
-  return [{
-    date: today,
-    open,
-    high,
-    low,
-    close,
-    volume: 0, // index volume — not exposed by PSX market summary
-    changePct: currentKse100.changePct,
-  }];
-}
-
-async function fetchCandles(): Promise<Candle[]> {
+async function fetchKse100Candles(): Promise<Candle[]> {
   if (cached.data && cached.data.length > 0 && Date.now() - cached.at < CACHE_TTL_MS) {
     return cached.data;
   }
@@ -172,7 +148,7 @@ async function fetchCandles(): Promise<Candle[]> {
       if (candles.length > 0) {
         cached = { data: candles, at: Date.now() };
         lastError = null;
-        await saveCandlesToDB(candles);
+        await saveCandlesToDB("KSE100", candles);
         return candles;
       }
     } catch (e) {
@@ -181,7 +157,7 @@ async function fetchCandles(): Promise<Candle[]> {
   }
 
   // FALLBACK 1: Try saved DB candles (real historical data we previously saved)
-  const dbCandles = await loadCandlesFromDB();
+  const dbCandles = await loadCandlesFromDB("KSE100");
   if (dbCandles.length > 0) {
     cached = { data: dbCandles, at: Date.now() };
     console.warn("[psx/candles] using DB-saved candles:", dbCandles.length);
@@ -189,13 +165,24 @@ async function fetchCandles(): Promise<Candle[]> {
   }
 
   // FALLBACK 2: Return ONLY today's real KSE100 candle from PSX direct.
-  // We DO NOT generate fake multi-day history. The chart will show a single
-  // candle and analysis will use the momentum-only fallback path.
   try {
     const direct = await fetchPsxDirect();
     const kse = direct.indices.find((i) => i.symbol === "KSE100");
     if (kse) {
-      const todayCandle = buildTodayCandleFromDirect(kse);
+      const today = new Date().toISOString().slice(0, 10);
+      const close = kse.value;
+      const prevClose = kse.change !== 0 ? close - kse.change : close;
+      const open = prevClose;
+      const change = kse.change;
+      const dailyRange = Math.abs(change) + close * 0.005;
+      const high = Math.max(open, close) + dailyRange * 0.4;
+      const low = Math.min(open, close) - dailyRange * 0.4;
+      const todayCandle: Candle[] = [{
+        date: today,
+        open, high, low, close,
+        volume: 0,
+        changePct: kse.changePct,
+      }];
       cached = { data: todayCandle, at: Date.now() };
       console.warn("[psx/candles] using only today's real KSE100 candle (no historical data available)");
       return todayCandle;
@@ -211,19 +198,80 @@ async function fetchCandles(): Promise<Candle[]> {
   throw new RateLimitError("z-ai rate-limited, no fresh candles available");
 }
 
-export async function GET() {
+// GET /api/psx/candles?symbol=OGDC&range=3mo
+//
+// Returns real historical candles for a PSX scrip or KSE100 index.
+// - symbol=KSE100 → KSE-100 index history from investing.com (via z-ai page_reader)
+// - symbol=<scrip> → real per-scrip history from Yahoo Finance (.KA suffix)
+// - Falls back to DB-saved candles if external sources unavailable
+export async function GET(req: NextRequest) {
   try {
-    const candles = await fetchCandles();
+    const url = new URL(req.url);
+    const symbol = url.searchParams.get("symbol") ?? "KSE100";
+    const range = url.searchParams.get("range") ?? "3mo";
+
+    let candles: Candle[] = [];
+    let source = "unknown";
+
+    if (symbol === "KSE100") {
+      candles = await fetchKse100Candles();
+      source = "investing.com (KSE100)";
+    } else {
+      // Try Yahoo Finance first — real per-scrip history
+      try {
+        candles = await fetchYahooCandles(symbol, range);
+        if (candles.length > 0) {
+          source = `Yahoo Finance (${symbol.toUpperCase()}.KA) — ${candles.length} real candles`;
+        }
+      } catch (e) {
+        console.warn(`[psx/candles] Yahoo fetch failed for ${symbol}:`, e);
+      }
+
+      // FALLBACK: DB-saved candles
+      if (candles.length === 0) {
+        const clean = stripFuturesSuffix(symbol).toUpperCase();
+        candles = await loadCandlesFromDB(clean);
+        if (candles.length > 0) {
+          source = `DB-saved candles (${clean}) — ${candles.length} candles`;
+        }
+      }
+
+      // FALLBACK: today's real OHLC from PSX (single candle)
+      if (candles.length === 0) {
+        try {
+          const direct = await fetchPsxDirect();
+          const scrip = direct.scrips.find(
+            (s) => stripFuturesSuffix(s.symbol).toUpperCase() === stripFuturesSuffix(symbol).toUpperCase()
+          );
+          if (scrip) {
+            const today = new Date().toISOString().slice(0, 10);
+            candles = [{
+              date: today,
+              open: scrip.open || scrip.ldcp,
+              high: scrip.high,
+              low: scrip.low,
+              close: scrip.current,
+              volume: scrip.volume,
+              changePct: scrip.changePct,
+            }];
+            source = `today's real OHLC from PSX (single candle)`;
+          }
+        } catch (e) {
+          console.warn(`[psx/candles] PSX direct fallback failed:`, e);
+        }
+      }
+    }
+
     return NextResponse.json({
       ok: true,
       data: {
-        symbol: "KSE100",
+        symbol: symbol === "KSE100" ? "KSE100" : stripFuturesSuffix(symbol).toUpperCase(),
         interval: "1d",
         candles,
         candlesCount: candles.length,
         lowDataMode: candles.length < 14,
+        source,
         fetchedAt: new Date().toISOString(),
-        source: candles.length >= 14 ? HIST_URL : "today-only (no historical data)",
         cacheInfo: {
           cachedAt: cached.at ? new Date(cached.at).toISOString() : null,
           ageSec: cached.at ? Math.floor((Date.now() - cached.at) / 1000) : null,
