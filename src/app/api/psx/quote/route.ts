@@ -9,6 +9,7 @@ import {
 } from "@/lib/zai-ratelimit";
 import { fetchPsxDirect, type DirectScrip } from "@/lib/psx-direct";
 import { saveScripDailySnapshot } from "@/lib/scrip-history";
+import { recordSeenScrips } from "@/lib/scrip-first-seen";
 import {
   LISTED_COMPANIES,
   lookupSector,
@@ -68,6 +69,10 @@ async function fetchPsxSummary(): Promise<PsxSummary> {
       lastError = null;
       saveScripDailySnapshot(parsed.scrips).catch((e) =>
         console.warn("[psx/quote] saveScripDailySnapshot failed:", e instanceof Error ? e.message : "unknown")
+      );
+      // Also record every seen scrip for first-seen tracking (used by /new-listings)
+      recordSeenScrips(parsed.scrips).catch((e) =>
+        console.warn("[psx/quote] recordSeenScrips failed:", e instanceof Error ? e.message : "unknown")
       );
       return parsed;
     }

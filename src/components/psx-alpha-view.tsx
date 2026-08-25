@@ -354,6 +354,21 @@ export function PsxAlphaView() {
   const [loadingBestTrades, setLoadingBestTrades] = React.useState(false);
   const [analysisFilter, setAnalysisFilter] = React.useState<"ALL" | "BUY" | "SELL" | "HOLD">("ALL");
   const [newListings, setNewListings] = React.useState<string[]>([]);
+  const [newListingsDetail, setNewListingsDetail] = React.useState<Array<{
+    symbol: string;
+    cleanName?: string;
+    sector?: string;
+    firstSeen?: string | null;
+    daysSeen?: number;
+  }>>([]);
+  const [newListingsMeta, setNewListingsMeta] = React.useState<{
+    detection_method: string;
+    db_stats: { total: number; seenToday: number; newToday: number; newThisWeek: number };
+    total_current: number;
+    total_known: number;
+    note: string;
+    first_scan: boolean;
+  } | null>(null);
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
   const [connectionStatus, setConnectionStatus] = React.useState<{
     market: { open: boolean; note: string };
@@ -533,17 +548,36 @@ export function PsxAlphaView() {
     }
   }, []);
 
-  // Check for new PSX listings (auto-detect new stocks)
+  // Check for new PSX listings (auto-detect new stocks via DB first-seen tracking)
   const fetchNewListings = React.useCallback(async () => {
     try {
       const res = await fetch("/api/psx/new-listings", { cache: "no-store" });
       const json = await res.json();
       if (json.ok && !json.data.first_scan) {
-        setNewListings(json.data.new_listings || []);
-        if ((json.data.new_listings || []).length > 0) {
+        const details = json.data.new_listings_detail || [];
+        const symbols = (json.data.new_listings || []).filter((s: string) =>
+          // Filter out known scrips that the curated baseline thinks are valid
+          // (when DB is in use, we trust the DB-backed list)
+          true
+        );
+        setNewListings(symbols);
+        setNewListingsDetail(details);
+        setNewListingsMeta({
+          detection_method: json.data.detection_method || "unknown",
+          db_stats: json.data.db_stats || { total: 0, seenToday: 0, newToday: 0, newThisWeek: 0 },
+          total_current: json.data.total_current || 0,
+          total_known: json.data.total_known || 0,
+          note: json.data.note || "",
+          first_scan: json.data.first_scan || false,
+        });
+        // Toast only for genuine new listings (when DB-backed tracking is active
+        // and there ARE new listings today). Don't toast on first-scan (every
+        // scrip is "new" the first time we see it — too noisy).
+        if (details.length > 0 && json.data.db_stats && json.data.db_stats.total > json.data.new_listings.length * 3) {
+          // Only toast if we have more in DB than what's new — means we have history
           toast({
             title: "🆕 New stock(s) detected on PSX!",
-            description: (json.data.new_listings || []).join(", "),
+            description: details.slice(0, 5).map((d: any) => d.symbol).join(", ") + (details.length > 5 ? ` … +${details.length - 5} more` : ""),
           });
         }
       }
@@ -1083,12 +1117,43 @@ export function PsxAlphaView() {
           <SignalCard analysis={analysis} loading={loadingAnalysis} symbol={symbol} />
         </div>
 
-        {(newListings?.length ?? 0) > 0 && (
-          <div className="rounded-lg border-2 border-violet-400 bg-violet-50/60 dark:bg-violet-950/30 p-2.5 flex items-center gap-2">
-            <span className="text-sm">🆕</span>
-            <p className="text-xs text-violet-700 dark:text-violet-300">
-              <span className="font-semibold">New stock(s) on PSX:</span> {newListings.join(", ")}
-            </p>
+        {/* New listings banner — shown when there are new listings detected.
+            Compact at top of overview, expands when there are many. */}
+        {(newListingsDetail?.length ?? 0) > 0 && (
+          <div className="rounded-lg border-2 border-violet-400/70 dark:border-violet-700/70 bg-violet-50/60 dark:bg-violet-950/30 p-3">
+            <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+              <p className="text-sm font-semibold flex items-center gap-1.5 text-violet-700 dark:text-violet-300">
+                <span>🆕</span> {newListingsDetail.length} new listing(s) detected on PSX
+              </p>
+              {newListingsMeta && (
+                <Badge variant="outline" className="text-[10px] bg-violet-100 dark:bg-violet-950/60 text-violet-700 dark:text-violet-300 border-violet-300">
+                  {newListingsMeta.detection_method.includes("DB") ? "via DB first-seen" : "via baseline"}
+                </Badge>
+              )}
+            </div>
+            <div className="flex flex-wrap gap-1.5">
+              {newListingsDetail.slice(0, 12).map((d, i) => (
+                <div key={i} className="rounded-md border border-violet-300/60 dark:border-violet-800/60 bg-violet-100/40 dark:bg-violet-950/40 px-2 py-1 text-[10px]">
+                  <span className="font-medium text-violet-800 dark:text-violet-200">{d.symbol}</span>
+                  {d.sector && (
+                    <span className="text-violet-600/70 dark:text-violet-400/70 ml-1">· {d.sector}</span>
+                  )}
+                  {d.firstSeen && (
+                    <span className="text-violet-500/60 dark:text-violet-500/60 ml-1">· first: {new Date(d.firstSeen).toLocaleDateString("en-PK", { month: "short", day: "numeric" })}</span>
+                  )}
+                </div>
+              ))}
+              {newListingsDetail.length > 12 && (
+                <div className="rounded-md border border-violet-300/60 dark:border-violet-800/60 px-2 py-1 text-[10px] text-violet-600 dark:text-violet-400">
+                  +{newListingsDetail.length - 12} more
+                </div>
+              )}
+            </div>
+            {newListingsMeta && (
+              <p className="text-[10px] text-violet-700/70 dark:text-violet-300/70 mt-2 leading-relaxed">
+                {newListingsMeta.note}
+              </p>
+            )}
           </div>
         )}
         <Card className="border-border/60">

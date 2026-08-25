@@ -27,6 +27,22 @@ model CandleHistory {
   @@index([date])
 }
 
+// First-seen tracking — every time the poller sees a scrip symbol on PSX, we
+// record its first appearance date. Used by /api/psx/new-listings to detect
+// IPOs and new listings (a symbol that appeared for the first time TODAY).
+model ScripFirstSeen {
+  id         String   @id @default(cuid())
+  symbol     String   @unique
+  cleanName  String
+  firstSeen  DateTime @default(now())
+  lastSeen   DateTime @default(now())
+  daysSeen   Int      @default(1)
+  sector     String?
+
+  @@index([firstSeen])
+  @@index([symbol])
+}
+
 // Paper trading portfolio
 model PaperPosition {
   id          String   @id @default(cuid())

@@ -1,4 +1,3 @@
-import { getBaseUrl } from "@/lib/base-url";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
 import { getBaseUrl } from "@/lib/base-url";
