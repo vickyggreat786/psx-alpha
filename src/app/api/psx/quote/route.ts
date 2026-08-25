@@ -10,6 +10,8 @@ import {
 import { fetchPsxDirect, type DirectScrip } from "@/lib/psx-direct";
 import { saveScripDailySnapshot } from "@/lib/scrip-history";
 import { recordSeenScrips } from "@/lib/scrip-first-seen";
+import { hasTwelveDataKey, fetchBatchQuotes, getAllPsxStocks, lookupName as tdLookupName } from "@/lib/twelve-data";
+import { lookupSectorBySymbol, getAllClassifiedStocks } from "@/lib/sector-classifier";
 import {
   LISTED_COMPANIES,
   lookupSector,
@@ -155,43 +157,85 @@ export async function GET() {
     const liveSymbols = new Map<string, typeof summary.scrips[0] & { sector: string }>();
     for (const [clean, s] of seenScrips.entries()) liveSymbols.set(clean, s);
 
+    // Add all PSX-listed companies from Twelve Data's authoritative list,
+    // classified by sector using curated list + heuristic name-based rules.
+    const tdStocks = getAllClassifiedStocks();
+    const tdStockMap = new Map<string, { symbol: string; name: string; sector: string }>();
+    for (const s of tdStocks) {
+      tdStockMap.set(s.symbol.toUpperCase(), {
+        symbol: s.symbol,
+        name: s.name,
+        sector: s.sector,
+      });
+    }
+
     type MergedStock = ReturnType<typeof scripToStock> & { traded: boolean };
     const mergedStocks: MergedStock[] = [];
-
-    // Add all listed companies (curated) — fill price from live data if traded
     const seenInCurated = new Set<string>();
-    for (const company of LISTED_COMPANIES) {
-      const clean = company.symbol.toUpperCase();
+
+    for (const [clean, tdInfo] of tdStockMap.entries()) {
       if (seenInCurated.has(clean)) continue;
       seenInCurated.add(clean);
       const live = liveSymbols.get(clean);
       if (live) {
+        // Live traded on PSX — use that price but Twelve Data's name + sector
         mergedStocks.push({
           ...scripToStock(live),
-          name: company.name,
-          sector: company.sector,
+          name: tdInfo.name,
+          sector: tdInfo.sector,
           traded: true,
         });
       } else {
-        // Not traded today — show as listed but no price
+        // Not traded today — show as listed with no price (will be fetched
+        // by /api/psx/candles when user clicks on it)
         mergedStocks.push({
-          symbol: company.symbol,
-          name: company.name,
+          symbol: tdInfo.symbol,
+          name: tdInfo.name,
           cleanSymbol: clean,
           price: 0, change: 0, changePct: 0, volume: 0,
           bid: 0, ask: 0, high52: 0, low52: 0,
           ldcp: 0, open: 0, high: 0, low: 0,
-          sector: company.sector,
+          sector: tdInfo.sector,
           traded: false,
         });
       }
     }
 
-    // Also include any live-traded symbols that weren't in our curated list
-    // (e.g. brand new IPOs we haven't catalogued yet).
+    // Also include any live-traded symbols from PSX direct that weren't in
+    // Twelve Data's list (shouldn't happen, but just in case)
     for (const [clean, s] of liveSymbols.entries()) {
       if (!seenInCurated.has(clean)) {
         mergedStocks.push({ ...scripToStock(s), traded: true });
+      }
+    }
+
+    // If Twelve Data API key is set, fetch real-time quotes for the top 8
+    // traded stocks (free tier limit: 8 calls/min). This gives true real-time
+    // prices for the most important stocks. Other traded stocks still get
+    // PSX-direct prices (which are also real, ~15-min delayed).
+    let tdQuoteCount = 0;
+    if (hasTwelveDataKey() && mergedStocks.length > 0) {
+      const topTradedSyms = mergedStocks
+        .filter((s) => s.traded)
+        .sort((a, b) => b.volume - a.volume)
+        .slice(0, 8)
+        .map((s) => s.symbol);
+      const tdQuotes = await fetchBatchQuotes(topTradedSyms);
+      for (const stock of mergedStocks) {
+        const clean = stripFuturesSuffix(stock.symbol).toUpperCase();
+        const tdQuote = tdQuotes.get(clean);
+        if (tdQuote && tdQuote.price > 0) {
+          // Update with Twelve Data's fresher real-time quote
+          stock.price = tdQuote.price;
+          stock.change = tdQuote.change;
+          stock.changePct = tdQuote.changePct;
+          stock.open = tdQuote.open;
+          stock.high = tdQuote.high;
+          stock.low = tdQuote.low;
+          stock.bid = tdQuote.price;
+          stock.ask = tdQuote.price;
+          tdQuoteCount++;
+        }
       }
     }
 
@@ -224,11 +268,13 @@ export async function GET() {
       ok: true,
       data: {
         indices: summary.indices,
-        // Return ALL merged stocks (live + curated, including non-traded)
         scrips: mergedStocks,
         totalListed: mergedStocks.length,
         totalTraded: traded.length,
+        totalPSXListed: tdStocks.length,
         uniqueUnderlyings: seenScrips.size,
+        tdRealtimeQuotes: tdQuoteCount,
+        tdEnabled: hasTwelveDataKey(),
         featured: kse100Stock
           ? [kse100Stock, ...byVolume.map((s) => scripToStock(s as any))]
           : byVolume.map((s) => scripToStock(s as any)),

@@ -9,6 +9,7 @@ import {
 import { fetchPsxDirect } from "@/lib/psx-direct";
 import { db } from "@/lib/db";
 import { fetchYahooCandles } from "@/lib/yahoo-finance";
+import { fetchHistory as fetchTdHistory, hasTwelveDataKey } from "@/lib/twelve-data";
 import { stripFuturesSuffix } from "@/lib/psx-listings";
 
 export const dynamic = "force-dynamic";
@@ -217,17 +218,42 @@ export async function GET(req: NextRequest) {
       candles = await fetchKse100Candles();
       source = "investing.com (KSE100)";
     } else {
-      // Try Yahoo Finance first — real per-scrip history
-      try {
-        candles = await fetchYahooCandles(symbol, range);
-        if (candles.length > 0) {
-          source = `Yahoo Finance (${symbol.toUpperCase()}.KA) — ${candles.length} real candles`;
+      // Priority 1: Twelve Data (if API key is set) — real-time per-scrip history
+      if (hasTwelveDataKey()) {
+        try {
+          // Determine outputsize from range
+          const outputsizeMap: Record<string, number> = {
+            "1mo": 30,
+            "3mo": 90,
+            "6mo": 180,
+            "1y": 365,
+            "2y": 730,
+            "5y": 1825,
+          };
+          const outputsize = outputsizeMap[range] ?? 90;
+          const tdCandles = await fetchTdHistory(symbol, "1day", outputsize);
+          if (tdCandles.length > 0) {
+            candles = tdCandles;
+            source = `Twelve Data (${stripFuturesSuffix(symbol).toUpperCase()}) — ${tdCandles.length} real candles`;
+          }
+        } catch (e) {
+          console.warn(`[psx/candles] Twelve Data failed for ${symbol}:`, e);
         }
-      } catch (e) {
-        console.warn(`[psx/candles] Yahoo fetch failed for ${symbol}:`, e);
       }
 
-      // FALLBACK: DB-saved candles
+      // Priority 2: Yahoo Finance — real per-scrip history (no API key needed)
+      if (candles.length === 0) {
+        try {
+          candles = await fetchYahooCandles(symbol, range);
+          if (candles.length > 0) {
+            source = `Yahoo Finance (${stripFuturesSuffix(symbol).toUpperCase()}.KA) — ${candles.length} real candles`;
+          }
+        } catch (e) {
+          console.warn(`[psx/candles] Yahoo fetch failed for ${symbol}:`, e);
+        }
+      }
+
+      // Priority 3: DB-saved candles
       if (candles.length === 0) {
         const clean = stripFuturesSuffix(symbol).toUpperCase();
         candles = await loadCandlesFromDB(clean);
@@ -236,7 +262,7 @@ export async function GET(req: NextRequest) {
         }
       }
 
-      // FALLBACK: today's real OHLC from PSX (single candle)
+      // Priority 4: today's real OHLC from PSX (single candle)
       if (candles.length === 0) {
         try {
           const direct = await fetchPsxDirect();

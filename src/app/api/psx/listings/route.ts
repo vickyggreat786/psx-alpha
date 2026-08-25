@@ -1,31 +1,36 @@
 import { NextResponse } from "next/server";
 import {
-  LISTED_COMPANIES,
-  PSX_SECTORS,
-  TOTAL_LISTED,
-  getListedBySector,
-} from "@/lib/psx-listings";
+  TWELVE_DATA_PSX_LIST,
+  type TwelveDataStock,
+} from "@/lib/twelve-data-list";
+import { PSX_SECTORS, LISTED_COMPANIES } from "@/lib/psx-listings";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/psx/listings — returns ALL PSX-listed companies (~520+) across
-// 36 sectoral categories. This is the curated master list — live prices for
-// any of these symbols are available from /api/psx/quote (which scrapes
-// psx.com.pk/market-summary + merges with this curated list).
+// GET /api/psx/listings — returns ALL PSX-listed companies from Twelve Data's
+// authoritative list (459 companies). Live prices come from /api/psx/quote
+// (which merges this list with live psx.com.pk data).
 export async function GET() {
   return NextResponse.json({
     ok: true,
     data: {
-      total: TOTAL_LISTED,
-      sectors: [...PSX_SECTORS],
-      bySector: getListedBySector(),
-      companies: LISTED_COMPANIES,
+      total: TWELVE_DATA_PSX_LIST.length,
+      source: "Twelve Data /stocks?country=Pakistan",
+      companies: TWELVE_DATA_PSX_LIST.map((s) => ({
+        symbol: s.symbol,
+        name: s.name,
+        sector: "PSX",
+        exchange: s.exchange,
+        mic_code: s.mic_code,
+        currency: s.currency,
+        type: s.type,
+      })),
       note:
-        `Curated master list of ${TOTAL_LISTED} PSX-listed companies across ` +
-        `${PSX_SECTORS.length} sectors. Real-time prices come from ` +
-        "/api/psx/quote which merges this list with live psx.com.pk " +
-        "market-summary data (today's traded scrips).",
-      source: "curated + psx.com.pk/market-summary",
+        `Authoritative PSX-listed companies from Twelve Data (${TWELVE_DATA_PSX_LIST.length} total). ` +
+        "Twelve Data covers the entire Pakistan Stock Exchange universe. " +
+        "For sector classifications, we use our curated list of " +
+        LISTED_COMPANIES.length + " companies mapped to PSX's " +
+        PSX_SECTORS.length + " sectoral categories.",
     },
   });
 }
