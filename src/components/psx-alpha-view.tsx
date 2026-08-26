@@ -606,15 +606,42 @@ export function PsxAlphaView() {
           note: json.data.note || "",
           first_scan: json.data.first_scan || false,
         });
-        // Toast only for genuine new listings (when DB-backed tracking is active
-        // and there ARE new listings today). Don't toast on first-scan (every
-        // scrip is "new" the first time we see it — too noisy).
-        if (details.length > 0 && json.data.db_stats && json.data.db_stats.total > json.data.new_listings.length * 3) {
-          // Only toast if we have more in DB than what's new — means we have history
-          toast({
-            title: "🆕 New stock(s) detected on PSX!",
-            description: details.slice(0, 5).map((d: any) => d.symbol).join(", ") + (details.length > 5 ? ` … +${details.length - 5} more` : ""),
-          });
+        // Toast ONLY ONCE per session for a given set of new listings —
+        // remember which symbols we've already shown a toast for, so the
+        // 20-second poll loop doesn't spam the user.
+        // Conditions:
+        //   1. There ARE new listings (details.length > 0)
+        //   2. DB-backed tracking is active (we have history — db_stats.total > 3x new)
+        //   3. We haven't already shown a toast for THIS set of new symbols this session
+        if (
+          details.length > 0 &&
+          json.data.db_stats &&
+          json.data.db_stats.total > json.data.new_listings.length * 3
+        ) {
+          // Compute a signature of the new listings (sorted symbols + firstSeen dates)
+          const sig = details
+            .map((d: any) => `${d.symbol}:${d.firstSeen ?? ""}`)
+            .sort()
+            .join("|");
+          // Read previously-shown signature from sessionStorage (persists across re-renders)
+          const SHOWN_KEY = "psx-alpha:new-listings-toast-shown";
+          let shownSig = "";
+          try {
+            shownSig = sessionStorage.getItem(SHOWN_KEY) ?? "";
+          } catch {
+            // sessionStorage might be unavailable in some embedded webviews
+          }
+          if (sig !== shownSig) {
+            toast({
+              title: "🆕 New stock(s) detected on PSX!",
+              description: details.slice(0, 5).map((d: any) => d.symbol).join(", ") + (details.length > 5 ? ` … +${details.length - 5} more` : ""),
+            });
+            try {
+              sessionStorage.setItem(SHOWN_KEY, sig);
+            } catch {
+              // ignore
+            }
+          }
         }
       }
     } catch (e) {
@@ -2208,6 +2235,200 @@ export function PsxAlphaView() {
             </CardContent>
           </Card>
 
+          {/* Reference Strategies — Famous traders' approaches adapted for PSX */}
+          <Card className="border-purple-200/60 dark:border-purple-900/60">
+            <CardContent className="p-4 sm:p-5">
+              <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+                <div>
+                  <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                    <Compass className="h-4 w-4 text-purple-600 dark:text-purple-400" />
+                    Reference Strategies — Proven Playbooks
+                  </h4>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    Famous trading strategies adapted for PSX. Pick one that matches your style + risk appetite.
+                  </p>
+                </div>
+                <Badge variant="outline" className="text-[10px] bg-purple-50 dark:bg-purple-950/30 text-purple-700 dark:text-purple-300 border-purple-300">
+                  5 proven playbooks
+                </Badge>
+              </div>
+              <div className="space-y-3">
+                {/* Strategy 1: Minervini Trend Template */}
+                <div className="rounded-md border border-purple-200/50 dark:border-purple-800/50 bg-purple-50/30 dark:bg-purple-950/10 p-3">
+                  <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                    <p className="text-[12px] font-semibold text-purple-700 dark:text-purple-300">
+                      📈 Minervini Trend Template — Momentum Breakout
+                    </p>
+                    <div className="flex gap-1.5">
+                      <Badge variant="outline" className="text-[9px] bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300">Best for Bull Markets</Badge>
+                      <Badge variant="outline" className="text-[9px]">High Risk</Badge>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed mb-2">
+                    <strong>Mark Minervini's</strong> SEPA strategy. Buy stocks in confirmed uptrends
+                    breaking out from consolidation. Use this when KSE-100 is above its 200-day SMA.
+                  </p>
+                  <div className="grid grid-cols-2 gap-1.5 text-[10px] text-muted-foreground">
+                    <div><strong className="text-purple-700 dark:text-purple-300">Entry:</strong> Price above SMA50, SMA20 above SMA50, RSI 60-70, breakout from base</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">Stop:</strong> 5-8% below entry OR below SMA20</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">Target:</strong> 20-25% from entry, then trail</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">PSX Example:</strong> LUCK in cement bull run, OGDC after PDL hike</div>
+                  </div>
+                </div>
+
+                {/* Strategy 2: Livermore Breakout */}
+                <div className="rounded-md border border-purple-200/50 dark:border-purple-800/50 bg-purple-50/30 dark:bg-purple-950/10 p-3">
+                  <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                    <p className="text-[12px] font-semibold text-purple-700 dark:text-purple-300">
+                      🔥 Livermore Breakout — Buy New Yearly Highs
+                    </p>
+                    <div className="flex gap-1.5">
+                      <Badge variant="outline" className="text-[9px] bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300">Trend Following</Badge>
+                      <Badge variant="outline" className="text-[9px]">High Risk</Badge>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed mb-2">
+                    <strong>Jesse Livermore's</strong> classic breakout strategy. Buy when a stock
+                    makes a new 52-week high on heavy volume — institutions are accumulating.
+                  </p>
+                  <div className="grid grid-cols-2 gap-1.5 text-[10px] text-muted-foreground">
+                    <div><strong className="text-purple-700 dark:text-purple-300">Entry:</strong> First close above 52-week high, volume &gt; 2× avg</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">Stop:</strong> 8-10% below entry</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">Target:</strong> Pyramidal — add on +5%, +10%</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">PSX Example:</strong> HBL, MCB in banking rallies</div>
+                  </div>
+                </div>
+
+                {/* Strategy 3: O'Neil CAN SLIM */}
+                <div className="rounded-md border border-purple-200/50 dark:border-purple-800/50 bg-purple-50/30 dark:bg-purple-950/10 p-3">
+                  <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                    <p className="text-[12px] font-semibold text-purple-700 dark:text-purple-300">
+                      💎 O'Neil CAN SLIM — Fundamental + Technical Combo
+                    </p>
+                    <div className="flex gap-1.5">
+                      <Badge variant="outline" className="text-[9px] bg-blue-50 dark:bg-blue-950/40 text-blue-700 dark:text-blue-300 border-blue-300">Balanced</Badge>
+                      <Badge variant="outline" className="text-[9px]">Medium Risk</Badge>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed mb-2">
+                    <strong>William O'Neil's</strong> approach combining earnings growth + technical breakout.
+                    Pick PSX stocks with rising EPS + breaking out from base.
+                  </p>
+                  <div className="grid grid-cols-2 gap-1.5 text-[10px] text-muted-foreground">
+                    <div><strong className="text-purple-700 dark:text-purple-300">C:</strong> Current quarterly EPS up 25%+</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">A:</strong> Annual EPS growth 25%+</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">N:</strong> New product/high — breakout from base</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">S:</strong> Supply: low float, buybacks</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">L:</strong> Leader — top in its sector</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">I:</strong> Institutional sponsorship (mutual funds buying)</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">M:</strong> Market direction — KSE-100 in uptrend</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">PSX Example:</strong> EFERT, FFC in fertilizer cycles</div>
+                  </div>
+                </div>
+
+                {/* Strategy 4: Darvas Box */}
+                <div className="rounded-md border border-purple-200/50 dark:border-purple-800/50 bg-purple-50/30 dark:bg-purple-950/10 p-3">
+                  <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                    <p className="text-[12px] font-semibold text-purple-700 dark:text-purple-300">
+                      📦 Darvas Box — Swing Breakout
+                    </p>
+                    <div className="flex gap-1.5">
+                      <Badge variant="outline" className="text-[9px] bg-amber-50 dark:bg-amber-950/40 text-amber-700 dark:text-amber-300 border-amber-300">Swing Trading</Badge>
+                      <Badge variant="outline" className="text-[9px]">Medium Risk</Badge>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed mb-2">
+                    <strong>Nicolas Darvas's</strong> "box theory". Identify consolidation boxes (price range);
+                    buy when price breaks above box top, trail box-by-box.
+                  </p>
+                  <div className="grid grid-cols-2 gap-1.5 text-[10px] text-muted-foreground">
+                    <div><strong className="text-purple-700 dark:text-purple-300">Step 1:</strong> Find stock with rising SMA20 + heavy volume</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">Step 2:</strong> Draw box around price range (high-low of last 3 days)</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">Step 3:</strong> Buy on close above box top</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">Stop:</strong> Below box bottom</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">Trail:</strong> New box on each new high</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">PSX Example:</strong> Cement stocks during price-hike cycles</div>
+                  </div>
+                </div>
+
+                {/* Strategy 5: Graham Value Investing */}
+                <div className="rounded-md border border-purple-200/50 dark:border-purple-800/50 bg-purple-50/30 dark:bg-purple-950/10 p-3">
+                  <div className="flex items-center justify-between mb-2 flex-wrap gap-2">
+                    <p className="text-[12px] font-semibold text-purple-700 dark:text-purple-300">
+                      🏦 Graham Value Investing — Margin of Safety
+                    </p>
+                    <div className="flex gap-1.5">
+                      <Badge variant="outline" className="text-[9px] bg-emerald-50 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-300">Long Term</Badge>
+                      <Badge variant="outline" className="text-[9px]">Low Risk</Badge>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed mb-2">
+                    <strong>Benjamin Graham's</strong> approach (Warren Buffett's teacher).
+                    Buy undervalued stocks with margin of safety. Best for PSX blue chips.
+                  </p>
+                  <div className="grid grid-cols-2 gap-1.5 text-[10px] text-muted-foreground">
+                    <div><strong className="text-purple-700 dark:text-purple-300">Criteria 1:</strong> P/E ratio &lt; 15</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">Criteria 2:</strong> P/B ratio &lt; 1.5</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">Criteria 3:</strong> Debt-to-equity &lt; 0.5</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">Criteria 4:</strong> Current ratio &gt; 2</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">Criteria 5:</strong> Dividend-paying for 10+ years</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">Margin of Safety:</strong> Buy at 50% of intrinsic value</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">Hold:</strong> 2-5 years</div>
+                    <div><strong className="text-purple-700 dark:text-purple-300">PSX Example:</strong> HBL, MCB, ENGRO blue chips</div>
+                  </div>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Indicator Cheat Sheet — quick reference */}
+          <Card className="border-blue-200/60 dark:border-blue-900/60">
+            <CardContent className="p-4 sm:p-5">
+              <h4 className="text-sm font-semibold flex items-center gap-1.5 mb-3">
+                <Gauge className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                Indicator Cheat Sheet — Quick Reference
+              </h4>
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[10px]">
+                <div className="rounded-md border border-blue-200/40 dark:border-blue-800/40 bg-blue-50/20 dark:bg-blue-950/10 p-2">
+                  <p className="font-semibold text-blue-700 dark:text-blue-300 mb-1">RSI(14)</p>
+                  <p className="text-muted-foreground">&lt;30 oversold · &gt;70 overbought · 40-60 neutral</p>
+                </div>
+                <div className="rounded-md border border-blue-200/40 dark:border-blue-800/40 bg-blue-50/20 dark:bg-blue-950/10 p-2">
+                  <p className="font-semibold text-blue-700 dark:text-blue-300 mb-1">MACD</p>
+                  <p className="text-muted-foreground">Above signal = bull · Histogram rising = momentum</p>
+                </div>
+                <div className="rounded-md border border-blue-200/40 dark:border-blue-800/40 bg-blue-50/20 dark:bg-blue-950/10 p-2">
+                  <p className="font-semibold text-blue-700 dark:text-blue-300 mb-1">SMA 20/50</p>
+                  <p className="text-muted-foreground">Golden cross: SMA20 ↑ SMA50 · Death cross: SMA20 ↓ SMA50</p>
+                </div>
+                <div className="rounded-md border border-blue-200/40 dark:border-blue-800/40 bg-blue-50/20 dark:bg-blue-950/10 p-2">
+                  <p className="font-semibold text-blue-700 dark:text-blue-300 mb-1">Bollinger Bands</p>
+                  <p className="text-muted-foreground">Touch lower = oversold · Touch upper = overbought</p>
+                </div>
+                <div className="rounded-md border border-blue-200/40 dark:border-blue-800/40 bg-blue-50/20 dark:bg-blue-950/10 p-2">
+                  <p className="font-semibold text-blue-700 dark:text-blue-300 mb-1">ATR(14)</p>
+                  <p className="text-muted-foreground">Volatility gauge · Stop = 1.5× ATR · Target = 3× ATR</p>
+                </div>
+                <div className="rounded-md border border-blue-200/40 dark:border-blue-800/40 bg-blue-50/20 dark:bg-blue-950/10 p-2">
+                  <p className="font-semibold text-blue-700 dark:text-blue-300 mb-1">Stochastic</p>
+                  <p className="text-muted-foreground">&lt;20 oversold · &gt;80 overbought · K cross above D = bull</p>
+                </div>
+                <div className="rounded-md border border-blue-200/40 dark:border-blue-800/40 bg-blue-50/20 dark:bg-blue-950/10 p-2">
+                  <p className="font-semibold text-blue-700 dark:text-blue-300 mb-1">VWAP</p>
+                  <p className="text-muted-foreground">Above VWAP = bull intraday · Below = bear</p>
+                </div>
+                <div className="rounded-md border border-blue-200/40 dark:border-blue-800/40 bg-blue-50/20 dark:bg-blue-950/10 p-2">
+                  <p className="font-semibold text-blue-700 dark:text-blue-300 mb-1">Volume</p>
+                  <p className="text-muted-foreground">High volume + price up = confirmation · Divergence = warning</p>
+                </div>
+                <div className="rounded-md border border-blue-200/40 dark:border-blue-800/40 bg-blue-50/20 dark:bg-blue-950/10 p-2">
+                  <p className="font-semibold text-blue-700 dark:text-blue-300 mb-1">Candlesticks</p>
+                  <p className="text-muted-foreground">Hammer, Engulfing, Morning Star = bullish · Doji = neutral</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
           {/* Strategy in practice — link to live signals */}
           <Card className="border-violet-200/60 dark:border-violet-900/60 bg-gradient-to-br from-violet-50/30 to-emerald-50/30 dark:from-violet-950/20 dark:to-emerald-950/20">
             <CardContent className="p-4 sm:p-5">
@@ -2717,34 +2938,51 @@ function BestTradeCard({ trade, onClick }: { trade: BestTradeRow; onClick: () =>
           <span>{trade.position.qty} sh · Rs {trade.position.positionValue.toFixed(0)}</span>
         </div>
         {trade.consensus && (
-          <div className="mt-2 pt-1.5 border-t border-border/40">
-            <p className="text-[9px] font-medium text-muted-foreground mb-1">
-              AI ensemble:{" "}
-              {consensusLabel ? (
-                <span className={consensusLabel.tone}>{consensusLabel.text}</span>
-              ) : null}
-              {trade.consensus.agreeCount > 0 && (
-                <>
-                  {" "}({trade.consensus.agreeCount}/{trade.consensus.totalCount} agree)
-                </>
-              )}
-            </p>
-            {trade.consensus.votes.slice(0, 2).map((v, i) => (
-              <p key={i} className="text-[9px] text-muted-foreground">
-                <span className="font-medium">{v.provider}:</span>{" "}
-                {v.error ? (
-                  // Show error state compactly — no need to expose verbose error messages
-                  <span className="text-muted-foreground/60 italic">unavailable</span>
-                ) : (
-                  <>{v.action} — {v.reasoning.slice(0, 80)}</>
+          // Only show AI ensemble block if there are ACTUAL votes (not just
+          // technical-only fallback). This keeps the card clean when AI is
+          // unavailable — no point showing "AI ensemble: TECHNICAL ONLY — AI
+          // unavailable" + provider error messages.
+          trade.consensus.agreeCount > 0 ? (
+            <div className="mt-2 pt-1.5 border-t border-border/40">
+              <p className="text-[9px] font-medium text-muted-foreground mb-1">
+                AI ensemble:{" "}
+                {consensusLabel ? (
+                  <span className={consensusLabel.tone}>{consensusLabel.text}</span>
+                ) : null}
+                {trade.consensus.agreeCount > 0 && (
+                  <>
+                    {" "}({trade.consensus.agreeCount}/{trade.consensus.totalCount} agree)
+                  </>
                 )}
               </p>
-            ))}
-          </div>
+              {trade.consensus.votes.slice(0, 2).map((v, i) => (
+                <p key={i} className="text-[9px] text-muted-foreground">
+                  <span className="font-medium">{v.provider}:</span>{" "}
+                  {v.error ? (
+                    // Show error state compactly — no need to expose verbose error messages
+                    <span className="text-muted-foreground/60 italic">unavailable</span>
+                  ) : (
+                    <>{v.action} — {v.reasoning.slice(0, 80)}</>
+                  )}
+                </p>
+              ))}
+            </div>
+          ) : (
+            // Technical-only mode — show a compact one-liner instead of the
+            // verbose "AI ensemble: TECHNICAL ONLY — AI unavailable + GLM-4: unavailable"
+            // block that was spamming the cards.
+            <div className="mt-2 pt-1.5 border-t border-border/40">
+              <p className="text-[9px] text-muted-foreground/80 italic">
+                Analysis based on real Yahoo Finance history + technical indicators.
+                Add AI API keys in Settings for AI ensemble confirmation.
+              </p>
+            </div>
+          )
         )}
         {(a.signals?.length ?? 0) > 0 && (
-          <p className="text-[9px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 line-clamp-2">
-            <span className="font-medium">Signals:</span> {a.signals.slice(0, 2).join(" · ")}
+          // Show up to 3 signals (was 2) so the LDCP info isn't truncated mid-sentence
+          <p className="text-[9px] text-muted-foreground mt-1.5 pt-1.5 border-t border-border/40 line-clamp-3">
+            <span className="font-medium">Signals:</span> {a.signals.slice(0, 3).join(" · ")}
           </p>
         )}
       </button>
