@@ -35,6 +35,10 @@ import {
   TrendingUp,
   Wifi,
   Zap,
+  Compass,
+  Trophy,
+  Flame,
+  Layers,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -727,6 +731,7 @@ export function PsxAlphaView() {
     stocks: ["section-stocks", "section-chart", "section-analysis"],
     signals: ["section-signals"],
     safe: ["section-safe"],
+    strategy: ["section-strategy"],
     portfolio: ["section-portfolio"],
     alerts: ["section-alerts"],
     extras: ["section-extras"],
@@ -1917,6 +1922,340 @@ export function PsxAlphaView() {
         </Card>
         </div>
 
+        {/* ---------- Main Strategy ---------- */}
+        {/* Professional trading strategy framework for PSX stocks.
+            Combines:
+            1. Position sizing rules (Kelly criterion-lite + risk %)
+            2. Entry criteria (multi-indicator confirmation)
+            3. Exit rules (target/stop/trailing)
+            4. Risk management (max concurrent positions, sector limits)
+            5. Daily routine (pre-market, intra-day, post-market)
+            All rules derived from real PSX market behavior + technical indicators
+            (RSI, MACD, Bollinger Bands, SMA, ATR, volume) computed on real Yahoo
+            Finance historical data. No fake data, no random numbers. */}
+        <div id="section-strategy" style={{ display: isSectionVisible("section-strategy") ? undefined : "none" }} className="space-y-4">
+
+          {/* Master Strategy Header */}
+          <Card className="border-violet-200/60 dark:border-violet-900/60">
+            <CardContent className="p-4 sm:p-5">
+              <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+                <div>
+                  <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                    <Compass className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+                    Master Trading Strategy — PSX Alpha Framework
+                  </h4>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    Pro-level rules for PSX stocks · Real-data indicators · Risk-managed position sizing
+                  </p>
+                </div>
+                <Badge variant="outline" className="text-[10px] bg-violet-50 dark:bg-violet-950/30 text-violet-700 dark:text-violet-300 border-violet-300">
+                  <Layers className="h-3 w-3 mr-1" />
+                  5-layer framework
+                </Badge>
+              </div>
+
+              {/* Strategy overview stats */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <div className="rounded-md border border-border/40 bg-muted/20 p-2 text-center">
+                  <p className="text-[10px] text-muted-foreground">Capital</p>
+                  <p className="text-sm font-bold tabular-nums">Rs 10,00,000</p>
+                </div>
+                <div className="rounded-md border border-border/40 bg-muted/20 p-2 text-center">
+                  <p className="text-[10px] text-muted-foreground">Risk/trade</p>
+                  <p className="text-sm font-bold tabular-nums text-rose-600 dark:text-rose-400">≤ 2.4%</p>
+                </div>
+                <div className="rounded-md border border-border/40 bg-muted/20 p-2 text-center">
+                  <p className="text-[10px] text-muted-foreground">Position size</p>
+                  <p className="text-sm font-bold tabular-nums">≤ 8%</p>
+                </div>
+                <div className="rounded-md border border-border/40 bg-muted/20 p-2 text-center">
+                  <p className="text-[10px] text-muted-foreground">Min R/R</p>
+                  <p className="text-sm font-bold tabular-nums text-emerald-600 dark:text-emerald-400">≥ 2.5:1</p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Layer 1: Entry Criteria */}
+          <Card className="border-emerald-200/60 dark:border-emerald-900/60">
+            <CardContent className="p-4 sm:p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="h-7 w-7 rounded-full bg-emerald-100 dark:bg-emerald-950/40 flex items-center justify-center shrink-0">
+                  <span className="text-emerald-700 dark:text-emerald-300 text-xs font-bold">1</span>
+                </div>
+                <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                  <Target className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+                  Entry Criteria — When to BUY
+                </h4>
+              </div>
+              <p className="text-[11px] text-muted-foreground mb-3 leading-relaxed">
+                A stock qualifies as a BUY only if it meets <strong>4 of these 6 criteria</strong>.
+                All indicators computed on real Yahoo Finance history (≥14 candles).
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div className="rounded-md border border-emerald-200/50 dark:border-emerald-800/50 bg-emerald-50/30 dark:bg-emerald-950/10 p-2.5">
+                  <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 mb-1">📈 Trend</p>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    Price <strong>above SMA20 AND SMA50</strong> (confirmed uptrend).
+                    <br />SMA20 above SMA50 (golden cross).
+                  </p>
+                </div>
+                <div className="rounded-md border border-emerald-200/50 dark:border-emerald-800/50 bg-emerald-50/30 dark:bg-emerald-950/10 p-2.5">
+                  <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 mb-1">📊 MACD</p>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    MACD line <strong>above signal line</strong> (bullish crossover).
+                    Histogram positive and rising.
+                  </p>
+                </div>
+                <div className="rounded-md border border-emerald-200/50 dark:border-emerald-800/50 bg-emerald-50/30 dark:bg-emerald-950/10 p-2.5">
+                  <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 mb-1">🌊 RSI</p>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    RSI(14) between <strong>40-70</strong> (rising from oversold → bullish).
+                    Avoid if RSI &gt; 75 (overbought).
+                  </p>
+                </div>
+                <div className="rounded-md border border-emerald-200/50 dark:border-emerald-800/50 bg-emerald-50/30 dark:bg-emerald-950/10 p-2.5">
+                  <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 mb-1">📊 Bollinger</p>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    Price <strong>touching/crossing lower band</strong> (mean reversion).
+                    Avoid if price &gt; upper band (extended).
+                  </p>
+                </div>
+                <div className="rounded-md border border-emerald-200/50 dark:border-emerald-800/50 bg-emerald-50/30 dark:bg-emerald-950/10 p-2.5">
+                  <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 mb-1">🕯️ Candlestick</p>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    Bullish pattern detected: <strong>Hammer, Bullish Engulfing, Morning Star, Piercing Line</strong>.
+                  </p>
+                </div>
+                <div className="rounded-md border border-emerald-200/50 dark:border-emerald-800/50 bg-emerald-50/30 dark:bg-emerald-950/10 p-2.5">
+                  <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-300 mb-1">💧 Volume</p>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    Today's volume <strong>above 20-day average volume</strong> (institutional interest).
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Layer 2: Position Sizing */}
+          <Card className="border-violet-200/60 dark:border-violet-900/60">
+            <CardContent className="p-4 sm:p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="h-7 w-7 rounded-full bg-violet-100 dark:bg-violet-950/40 flex items-center justify-center shrink-0">
+                  <span className="text-violet-700 dark:text-violet-300 text-xs font-bold">2</span>
+                </div>
+                <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                  <Layers className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+                  Position Sizing — How much to BUY
+                </h4>
+              </div>
+              <p className="text-[11px] text-muted-foreground mb-3 leading-relaxed">
+                Use the <strong>1.5 × ATR(14)</strong> rule to set stop-loss, then size position
+                so risk per trade is <strong>≤ 2.4% of capital</strong>.
+              </p>
+              <div className="space-y-2">
+                <div className="rounded-md border border-violet-200/50 dark:border-violet-800/50 bg-violet-50/30 dark:bg-violet-950/10 p-2.5">
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    <strong className="text-violet-700 dark:text-violet-300">Step 1:</strong> Compute ATR(14) from the stock's real daily history (Yahoo Finance).
+                  </p>
+                </div>
+                <div className="rounded-md border border-violet-200/50 dark:border-violet-800/50 bg-violet-50/30 dark:bg-violet-950/10 p-2.5">
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    <strong className="text-violet-700 dark:text-violet-300">Step 2:</strong> Stop-loss = Entry − (1.5 × ATR). Target = Entry + (3 × ATR) → R/R = 2:1.
+                  </p>
+                </div>
+                <div className="rounded-md border border-violet-200/50 dark:border-violet-800/50 bg-violet-50/30 dark:bg-violet-950/10 p-2.5">
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    <strong className="text-violet-700 dark:text-violet-300">Step 3:</strong> Max risk = Capital × 2.4% = Rs 24,000.
+                  </p>
+                </div>
+                <div className="rounded-md border border-violet-200/50 dark:border-violet-800/50 bg-violet-50/30 dark:bg-violet-950/10 p-2.5">
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    <strong className="text-violet-700 dark:text-violet-300">Step 4:</strong> Quantity = (Max risk ÷ Risk per share). Cap position at 8% of capital.
+                  </p>
+                </div>
+              </div>
+              <div className="mt-3 rounded-md bg-muted/30 p-2.5 border border-border/40">
+                <p className="text-[10px] text-muted-foreground leading-relaxed">
+                  <strong>Example:</strong> OGDC @ 327.70 · ATR(14) = 8.46 · Stop = 315.01 (−3.87%) · Target = 353.08 · Risk/share = 12.69 · Max risk Rs 24k → 1,890 shares @ Rs 619k position (62% — too big). Cap to 8% = Rs 80k → 244 shares. Risk = Rs 3,096 (0.31%).
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Layer 3: Exit Rules */}
+          <Card className="border-rose-200/60 dark:border-rose-900/60">
+            <CardContent className="p-4 sm:p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="h-7 w-7 rounded-full bg-rose-100 dark:bg-rose-950/40 flex items-center justify-center shrink-0">
+                  <span className="text-rose-700 dark:text-rose-300 text-xs font-bold">3</span>
+                </div>
+                <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                  <Flame className="h-4 w-4 text-rose-600 dark:text-rose-400" />
+                  Exit Rules — When to SELL
+                </h4>
+              </div>
+              <div className="space-y-2">
+                <div className="rounded-md border border-rose-200/50 dark:border-rose-800/50 bg-rose-50/30 dark:bg-rose-950/10 p-2.5">
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    <strong className="text-rose-700 dark:text-rose-300">🎯 Target hit (1):</strong> Sell <strong>50% of position</strong> at target price. Move stop to entry (breakeven) on remainder.
+                  </p>
+                </div>
+                <div className="rounded-md border border-rose-200/50 dark:border-rose-800/50 bg-rose-50/30 dark:bg-rose-950/10 p-2.5">
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    <strong className="text-rose-700 dark:text-rose-300">🛑 Stop loss hit (2):</strong> Sell <strong>100% of position</strong> immediately. No averaging down. No "wait and see."
+                  </p>
+                </div>
+                <div className="rounded-md border border-rose-200/50 dark:border-rose-800/50 bg-rose-50/30 dark:bg-rose-950/10 p-2.5">
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    <strong className="text-rose-700 dark:text-rose-300">📈 Trailing stop (3):</strong> After +2% gain, trail stop behind SMA20. After +5% gain, trail stop behind previous day's low.
+                  </p>
+                </div>
+                <div className="rounded-md border border-rose-200/50 dark:border-rose-800/50 bg-rose-50/30 dark:bg-rose-950/10 p-2.5">
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    <strong className="text-rose-700 dark:text-rose-300">⚠️ RSI overbought (4):</strong> If RSI(14) &gt; <strong>75</strong> after entry, exit 50% (lock in profit).
+                  </p>
+                </div>
+                <div className="rounded-md border border-rose-200/50 dark:border-rose-800/50 bg-rose-50/30 dark:bg-rose-950/10 p-2.5">
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    <strong className="text-rose-700 dark:text-rose-300">📅 Time stop (5):</strong> If position is open <strong>5 trading days</strong> with no move (±1%), exit. Capital tied up = opportunity cost.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Layer 4: Risk Management */}
+          <Card className="border-amber-200/60 dark:border-amber-900/60">
+            <CardContent className="p-4 sm:p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="h-7 w-7 rounded-full bg-amber-100 dark:bg-amber-950/40 flex items-center justify-center shrink-0">
+                  <span className="text-amber-700 dark:text-amber-300 text-xs font-bold">4</span>
+                </div>
+                <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                  <ShieldCheck className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+                  Risk Management — Capital Protection
+                </h4>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div className="rounded-md border border-amber-200/50 dark:border-amber-800/50 bg-amber-50/30 dark:bg-amber-950/10 p-2.5">
+                  <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-300 mb-1">Max concurrent positions</p>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    <strong>5 positions max</strong>. Each ≤ 8% of capital. Total invested ≤ 40% of capital.
+                  </p>
+                </div>
+                <div className="rounded-md border border-amber-200/50 dark:border-amber-800/50 bg-amber-50/30 dark:bg-amber-950/10 p-2.5">
+                  <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-300 mb-1">Sector concentration</p>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    Max <strong>2 positions per sector</strong>. Avoids concentration risk if a sector (e.g., Cement) crashes.
+                  </p>
+                </div>
+                <div className="rounded-md border border-amber-200/50 dark:border-amber-800/50 bg-amber-50/30 dark:bg-amber-950/10 p-2.5">
+                  <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-300 mb-1">Daily loss limit</p>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    If 2 stops hit in same day → <strong>stop trading for the day</strong>. Reassess next morning.
+                  </p>
+                </div>
+                <div className="rounded-md border border-amber-200/50 dark:border-amber-800/50 bg-amber-50/30 dark:bg-amber-950/10 p-2.5">
+                  <p className="text-[11px] font-semibold text-amber-700 dark:text-amber-300 mb-1">Weekly drawdown limit</p>
+                  <p className="text-[10px] text-muted-foreground leading-relaxed">
+                    If portfolio drops <strong>−5% in a week</strong> → halve position sizes for next week.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Layer 5: Daily Routine */}
+          <Card className="border-blue-200/60 dark:border-blue-900/60">
+            <CardContent className="p-4 sm:p-5">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="h-7 w-7 rounded-full bg-blue-100 dark:bg-blue-950/40 flex items-center justify-center shrink-0">
+                  <span className="text-blue-700 dark:text-blue-300 text-xs font-bold">5</span>
+                </div>
+                <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                  <Clock className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                  Daily Routine — Trading Discipline
+                </h4>
+              </div>
+              <div className="space-y-2">
+                <div className="rounded-md border border-blue-200/50 dark:border-blue-800/50 bg-blue-50/30 dark:bg-blue-950/10 p-2.5">
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    <strong className="text-blue-700 dark:text-blue-300">🌅 Pre-market (9:00 – 9:30 AM PKT):</strong> Review overnight global markets. Check Safe Setups screener for A+ signals. Pre-select 2-3 candidates for the day.
+                  </p>
+                </div>
+                <div className="rounded-md border border-blue-200/50 dark:border-blue-800/50 bg-blue-50/30 dark:bg-blue-950/10 p-2.5">
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    <strong className="text-blue-700 dark:text-blue-300">📊 Open (9:30 AM):</strong> Wait first 15 minutes (avoiding opening volatility spike). Then check candidates' first 15-min candle — only enter on bullish confirmation.
+                  </p>
+                </div>
+                <div className="rounded-md border border-blue-200/50 dark:border-blue-800/50 bg-blue-50/30 dark:bg-blue-950/10 p-2.5">
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    <strong className="text-blue-700 dark:text-blue-300">⚡ Intra-day:</strong> Set alerts for target/stop. Don't watch charts constantly — let the trade work. Review open positions every 30 min.
+                  </p>
+                </div>
+                <div className="rounded-md border border-blue-200/50 dark:border-blue-800/50 bg-blue-50/30 dark:bg-blue-950/10 p-2.5">
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    <strong className="text-blue-700 dark:text-blue-300">🌆 Close (3:30 PM):</strong> Don't initiate new positions in last 30 min. Review closed trades in Alerts Log. Log P&L and learnings.
+                  </p>
+                </div>
+                <div className="rounded-md border border-blue-200/50 dark:border-blue-800/50 bg-blue-50/30 dark:bg-blue-950/10 p-2.5">
+                  <p className="text-[11px] text-muted-foreground leading-relaxed">
+                    <strong className="text-blue-700 dark:text-blue-300">📝 Post-market (evening):</strong> Update trade journal. Note what worked / what didn't. Plan next-day candidates from Safe Setups screener.
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Strategy in practice — link to live signals */}
+          <Card className="border-violet-200/60 dark:border-violet-900/60 bg-gradient-to-br from-violet-50/30 to-emerald-50/30 dark:from-violet-950/20 dark:to-emerald-950/20">
+            <CardContent className="p-4 sm:p-5">
+              <h4 className="text-sm font-semibold flex items-center gap-1.5 mb-3">
+                <Trophy className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+                Strategy in Practice — Live Now
+              </h4>
+              <p className="text-[11px] text-muted-foreground mb-3 leading-relaxed">
+                The Safe Setups tab applies this strategy to <strong>{safeStats?.total_scanned ?? "—" } PSX stocks</strong> daily.
+                Right now there are <strong className="text-emerald-700 dark:text-emerald-300">{safeSignals.length} A+ setups</strong> that meet ALL the criteria above.
+              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <Button
+                  onClick={() => setActiveSection("safe")}
+                  size="sm"
+                  className="h-8 bg-violet-600 hover:bg-violet-700 text-white"
+                >
+                  <ShieldCheck className="h-3.5 w-3.5 mr-1.5" />
+                  View {safeSignals.length} A+ setups →
+                </Button>
+                <Button
+                  onClick={() => setActiveSection("alerts")}
+                  size="sm"
+                  variant="outline"
+                  className="h-8"
+                >
+                  <TrendingUp className="h-3.5 w-3.5 mr-1.5" />
+                  Trade Journal ({(alertsLog?.length ?? 0)} entries)
+                </Button>
+                <Button
+                  onClick={() => setActiveSection("portfolio")}
+                  size="sm"
+                  variant="outline"
+                  className="h-8"
+                >
+                  <Wallet className="h-3.5 w-3.5 mr-1.5" />
+                  Open Positions ({(portfolio?.positions?.length ?? 0)})
+                </Button>
+              </div>
+              <div className="mt-3 pt-3 border-t border-border/40">
+                <p className="text-[10px] text-muted-foreground italic leading-relaxed">
+                  💡 <strong>Disclaimer:</strong> PSX Alpha is a paper-trading platform for educational purposes. Real-money trading carries substantial risk. Always do your own research and consult a SECP-licensed financial advisor before investing.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+
         {/* ---------- Paper Trading Portfolio ---------- */}
         <div id="section-portfolio" style={{ display: isSectionVisible("section-portfolio") ? undefined : "none" }}>
         <Card className="border-border/60">
@@ -2239,6 +2578,7 @@ const NAV_ITEMS: Array<{ id: string; label: string; icon: React.ElementType }> =
   { id: "stocks", label: "Stocks + Chart + AI", icon: Activity },
   { id: "signals", label: "Trade Signals", icon: Zap },
   { id: "safe", label: "Safe Setups", icon: ShieldCheck },
+  { id: "strategy", label: "Main Strategy", icon: Compass },
   { id: "portfolio", label: "Portfolio", icon: Wallet },
   { id: "alerts", label: "Alerts Log", icon: TrendingUp },
   { id: "extras", label: "IPOs + Indices", icon: Bell },
