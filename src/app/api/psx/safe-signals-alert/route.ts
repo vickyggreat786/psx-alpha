@@ -17,7 +17,7 @@ interface PositionSize {
 
 export async function GET() {
   try {
-    const res = await fetch("" + getBaseUrl() + "/api/psx/safe-signals", {
+    const res = await fetch(`${getBaseUrl()}/api/psx/safe-signals`, {
       cache: "no-store",
     });
     const json = (await res.json()) as {

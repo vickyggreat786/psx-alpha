@@ -293,8 +293,13 @@ async function callGLM(prompt: string): Promise<string> {
       zai.chat.completions.create({
         messages: [
           {
-            role: "assistant",
-            content: "You are PSX Alpha, a senior technical analyst. Be concise and direct.",
+            role: "system",
+            content:
+              "You are PSX Alpha, a senior Pakistan Stock Exchange technical analyst. " +
+              "Respond with ONLY the final analysis text — no chain-of-thought, no narration, " +
+              "no preamble like 'The user wants' or 'Let me think'. Start directly with the " +
+              "stock analysis (e.g. 'OGDC shows strong bullish momentum...'). " +
+              "Write 3-4 sentences max. End with the action word (BUY/SELL/HOLD).",
           },
           { role: "user", content: prompt },
         ],
@@ -305,10 +310,50 @@ async function callGLM(prompt: string): Promise<string> {
       setTimeout(() => reject(new Error("GLM-4 timeout after 10s")), 10_000)
     ),
   ]);
-  return (
-    (completion as { choices?: Array<{ message?: { content?: string } }> })
-      ?.choices?.[0]?.message?.content ?? ""
-  );
+  const raw = (completion as { choices?: Array<{ message?: { content?: string } }> })
+    ?.choices?.[0]?.message?.content ?? "";
+  // Clean chain-of-thought leaks — some models return "Let me..." or "The user wants..." prefixes
+  return cleanChainOfThought(raw);
+}
+
+// Strip chain-of-thought leaks from AI output.
+// Some models return "Let me think..." or "The user wants..." instead of the analysis.
+// We remove everything before the actual analysis starts.
+function cleanChainOfThought(text: string): string {
+  if (!text) return "";
+  let cleaned = text.trim();
+  // Remove common prefixes that indicate chain-of-thought
+  const badPrefixes = [
+    /^(?:The user|User|I|We|Let me|Let's|First|Sure|Okay|Alright|Certainly|Of course)[\s\S]{0,500}?(?=\n\n[A-Z])/i,
+    /^Here(?:'s| is)[\s\S]{0,200}?\n\n/i,
+    /^Prompt:[\s\S]{0,500}?\n\n/i,
+  ];
+  for (const re of badPrefixes) {
+    cleaned = cleaned.replace(re, "").trim();
+  }
+  // If text contains "We need to" or "Let's craft" — take only the part after the LAST occurrence
+  const cotPatterns = [
+    /We need to[\s\S]{0,500}$/i,
+    /Let's craft[\s\S]{0,500}$/i,
+    /Let me craft[\s\S]{0,500}$/i,
+    /Let me write[\s\S]{0,500}$/i,
+    /Let's write[\s\S]{0,500}$/i,
+    /Let's create[\s\S]{0,500}$/i,
+  ];
+  for (const re of cotPatterns) {
+    const m = cleaned.match(re);
+    if (m) {
+      cleaned = cleaned.slice(0, m.index).trim();
+    }
+  }
+  // Look for quoted actual output: "..." or "'''..." — extract it
+  const quoteMatch = cleaned.match(/['"]([A-Z][\s\S]{50,}?['"])(?:\.?|\n|$)/);
+  if (quoteMatch) {
+    cleaned = quoteMatch[1].replace(/['"]$/, "").trim();
+  }
+  // Remove leading "Sure," "Okay," "Here's the analysis:" etc.
+  cleaned = cleaned.replace(/^(?:Sure|Okay|Alright|Certainly|Of course|Here's the analysis:?)[:,]?\s*/i, "");
+  return cleaned;
 }
 
 // ---------- Google Gemini 2.0 Flash — FREE, globally available ----------

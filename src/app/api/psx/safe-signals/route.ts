@@ -23,7 +23,9 @@ export const maxDuration = 60;
 // margin — so the UI can still show something useful when nothing qualifies.
 export async function GET() {
   try {
-    const signalsRes = await fetch("" + getBaseUrl() + "/api/psx/signals", {
+    // Fetch the full all-scrips analysis (covers all ~290 scrips, not just
+    // 12 from /signals).
+    const analyzeRes = await fetch(`${getBaseUrl()}/api/psx/analyze-all`, {
       cache: "no-store",
     });
     const analyzeJson = (await analyzeRes.json()) as {

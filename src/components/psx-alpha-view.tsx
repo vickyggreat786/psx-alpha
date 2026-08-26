@@ -2393,7 +2393,8 @@ function BestTradeCard({ trade, onClick }: { trade: BestTradeRow; onClick: () =>
               <p key={i} className="text-[9px] text-muted-foreground">
                 <span className="font-medium">{v.provider}:</span>{" "}
                 {v.error ? (
-                  <span className="text-rose-500/80">{v.error.slice(0, 60)}</span>
+                  // Show error state compactly — no need to expose verbose error messages
+                  <span className="text-muted-foreground/60 italic">unavailable</span>
                 ) : (
                   <>{v.action} — {v.reasoning.slice(0, 80)}</>
                 )}

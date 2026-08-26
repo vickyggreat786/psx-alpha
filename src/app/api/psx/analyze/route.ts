@@ -65,7 +65,7 @@ interface CandlesResponse {
 }
 
 async function fetchQuote(): Promise<QuoteResponse["data"]> {
-  const res = await fetch("" + getBaseUrl() + "/api/psx/quote", {
+  const res = await fetch(`${getBaseUrl()}/api/psx/quote`, {
     cache: "no-store",
   });
   const json = (await res.json()) as QuoteResponse;
@@ -74,7 +74,7 @@ async function fetchQuote(): Promise<QuoteResponse["data"]> {
 }
 
 async function fetchCandles(): Promise<Candle[]> {
-  const res = await fetch("" + getBaseUrl() + "/api/psx/candles", {
+  const res = await fetch(`${getBaseUrl()}/api/psx/candles`, {
     cache: "no-store",
   });
   const json = (await res.json()) as CandlesResponse;
@@ -91,27 +91,30 @@ async function generateAiSummary(
   composite: CompositeSignal,
   patterns: ReturnType<typeof detectPatterns>
 ): Promise<string> {
-  const prompt = `Analyze ${symbol} (Pakistan Stock Exchange) and explain the ${composite.action} signal in 3-4 sentences.
+  // Single clean prompt — explain the technical setup directly.
+  // The LLM is instructed to skip any chain-of-thought and START directly
+  // with the stock analysis (no "Let me think", no "The user wants").
+  const prompt = `${symbol} is a stock on the Pakistan Stock Exchange (PSX).
 
-INDICATORS:
-- Price: ${snap.price.toFixed(2)}
-- RSI(14): ${snap.rsi14.toFixed(1)} (prev: ${snap.rsiPrev.toFixed(1)})
-- MACD: ${snap.macd.toFixed(3)} / signal ${snap.macdSignal.toFixed(3)} / hist ${snap.macdHistogram.toFixed(3)}
-- SMA20: ${snap.sma20.toFixed(2)} | SMA50: ${snap.sma50.toFixed(2)}
-- Bollinger: lower ${snap.bbLower.toFixed(2)} / mid ${snap.bbMiddle.toFixed(2)} / upper ${snap.bbUpper.toFixed(2)}
-- ATR14: ${snap.atr14.toFixed(2)} | Stoch K/D: ${snap.stochK.toFixed(1)}/${snap.stochD.toFixed(1)} | VWAP: ${snap.vwap.toFixed(2)}
-- Candlestick patterns: ${patterns.length > 0 ? patterns.map((p) => p.name).join(", ") : "none"}
+It currently has a ${composite.action} signal at ${composite.confidence.toFixed(0)}% confidence.
 
-Composite signal: ${composite.action} (${composite.confidence.toFixed(0)}% confidence)
-Entry: ${composite.entry?.toFixed(2) ?? "—"} | Stop: ${composite.stopLoss?.toFixed(2) ?? "—"} | Target: ${composite.target?.toFixed(2) ?? "—"}
+Key technical indicators:
+- Price: ${snap.price.toFixed(2)} | RSI(14): ${snap.rsi14.toFixed(1)} | MACD hist: ${snap.macdHistogram.toFixed(3)}
+- SMA20: ${snap.sma20.toFixed(2)} | SMA50: ${snap.sma50.toFixed(2)} | VWAP: ${snap.vwap.toFixed(2)}
+- Bollinger: lower ${snap.bbLower.toFixed(2)} / upper ${snap.bbUpper.toFixed(2)}
+- Stochastic: K ${snap.stochK.toFixed(1)} / D ${snap.stochD.toFixed(1)}
+- ATR(14): ${snap.atr14.toFixed(2)}
+- Candlestick patterns: ${patterns.length > 0 ? patterns.map((p) => p.name).join(", ") : "none detected"}
 
-Write a direct, plain-language explanation. Mention 2-3 specific indicators. Agree with the ${composite.action} signal. End with the word "${composite.action}". Do NOT narrate or describe the request — just give the analysis.`;
+Trade plan: ${composite.action} entry ${composite.entry?.toFixed(2) ?? "—"}, stop ${composite.stopLoss?.toFixed(2) ?? "—"}, target ${composite.target?.toFixed(2) ?? "—"}.
+
+Write a 3-4 sentence professional technical analysis starting with "${symbol} shows" or "${symbol}'s price". Mention 2-3 specific indicators from above and why they support the ${composite.action} signal. End with the word ${composite.action}.`;
 
   // Try Cohere FIRST — it's globally accessible and the user has a valid key.
   try {
     const cohereResponse = await callCohere(prompt);
     if (cohereResponse && cohereResponse.length > 10) {
-      return cohereResponse;
+      return cleanAIResponse(cohereResponse);
     }
   } catch (e) {
     console.warn("[AI summary] Cohere failed, trying Gemini:", e instanceof Error ? e.message : "unknown");
@@ -121,7 +124,7 @@ Write a direct, plain-language explanation. Mention 2-3 specific indicators. Agr
   try {
     const geminiResponse = await callGemini(prompt);
     if (geminiResponse && geminiResponse.length > 10) {
-      return geminiResponse;
+      return cleanAIResponse(geminiResponse);
     }
   } catch (e) {
     console.warn("[AI summary] Gemini failed, trying Together:", e instanceof Error ? e.message : "unknown");
@@ -131,7 +134,7 @@ Write a direct, plain-language explanation. Mention 2-3 specific indicators. Agr
   try {
     const togetherResponse = await callTogether(prompt);
     if (togetherResponse && togetherResponse.length > 10) {
-      return togetherResponse;
+      return cleanAIResponse(togetherResponse);
     }
   } catch (e) {
     console.warn("[AI summary] Together failed, trying OpenRouter:", e instanceof Error ? e.message : "unknown");
@@ -141,7 +144,7 @@ Write a direct, plain-language explanation. Mention 2-3 specific indicators. Agr
   try {
     const orResponse = await callOpenRouter(prompt);
     if (orResponse && orResponse.length > 10) {
-      return orResponse;
+      return cleanAIResponse(orResponse);
     }
   } catch (e) {
     console.warn("[AI summary] OpenRouter failed, trying Groq:", e instanceof Error ? e.message : "unknown");
@@ -151,7 +154,7 @@ Write a direct, plain-language explanation. Mention 2-3 specific indicators. Agr
   try {
     const groqResponse = await callGroq(prompt);
     if (groqResponse && groqResponse.length > 10) {
-      return groqResponse;
+      return cleanAIResponse(groqResponse);
     }
   } catch (e) {
     console.warn("[AI summary] Groq failed, trying GLM-4:", e instanceof Error ? e.message : "unknown");
@@ -163,20 +166,23 @@ Write a direct, plain-language explanation. Mention 2-3 specific indicators. Agr
       zai.chat.completions.create({
         messages: [
           {
-            role: "assistant",
+            role: "system",
             content:
-              "You are PSX Alpha, an institutional-grade technical analyst. Be direct and specific.",
+              "You are PSX Alpha, a senior Pakistan Stock Exchange technical analyst. " +
+              "Respond with ONLY the final analysis text — no chain-of-thought, no narration, " +
+              "no preamble like 'The user wants' or 'Let me think'. Start directly with the " +
+              "stock analysis (e.g. 'OGDC shows strong bullish momentum...'). " +
+              "Write 3-4 sentences max. End with the action word (BUY/SELL/HOLD).",
           },
           { role: "user", content: prompt },
         ],
         thinking: { type: "disabled" },
       })
     );
-    return (
-      (completion as { choices?: Array<{ message?: { content?: string } }> })
-        ?.choices?.[0]?.message?.content ??
-      buildTechnicalFallback(symbol, composite)
-    );
+    const content = (completion as { choices?: Array<{ message?: { content?: string } }> })
+      ?.choices?.[0]?.message?.content ??
+      buildTechnicalFallback(symbol, composite);
+    return cleanAIResponse(content);
   } catch (e) {
     const isRL = e instanceof RateLimitError;
     if (isRL) {
@@ -185,6 +191,81 @@ Write a direct, plain-language explanation. Mention 2-3 specific indicators. Agr
     console.error("[AI summary] error:", e);
     return buildTechnicalFallback(symbol, composite);
   }
+}
+
+// Clean AI response — strip chain-of-thought leaks that some models produce.
+// "The user wants..." or "Let me think..." prefixes are removed.
+// We try to extract the actual analysis text.
+function cleanAIResponse(text: string): string {
+  if (!text) return "";
+  let cleaned = text.trim();
+
+  // If the response contains analysis preceded by chain-of-thought, try to
+  // extract the analysis. Common patterns:
+  //   "Let me analyze... <reasoning> ... <actual analysis>"
+  //   "The user wants... <echoed instructions> ... <analysis>"
+  //   "Sure, here's the analysis: <analysis>"
+  //   "<reasoning>\n\n<actual analysis>"
+
+  // Look for a paragraph that starts with a capital letter and the symbol
+  // name or a stock-related word — that's likely the actual analysis start.
+  const analysisStartPatterns = [
+    // Look for the LAST occurrence of a paragraph starting with capital letter
+    // followed by stock-related words. This catches the case where the model
+    // wrote reasoning first, then the analysis.
+    /\n\n([A-Z][A-Z][A-Z0-9.&-]{2,15}\s+(?:shows|is|has|trades|closed|opened|price|currently|exhibits|presents|demonstrates|appears))[\s\S]{50,1500}$/,
+    /\n\n([A-Z][a-z]+\s+(?:shows|is|has|trades|closed|opened|price|currently|exhibits|presents|demonstrates|appears))[\s\S]{50,1500}$/,
+  ];
+  for (const re of analysisStartPatterns) {
+    const m = cleaned.match(re);
+    if (m) {
+      cleaned = m[1].trim();
+      break;
+    }
+  }
+
+  // Remove known bad prefixes
+  const badPrefixes = [
+    /^The user wants[\s\S]{0,800}?\n\n/i,
+    /^Let me analyze[\s\S]{0,800}?\n\n/i,
+    /^Let me think[\s\S]{0,800}?\n\n/i,
+    /^Let's analyze[\s\S]{0,800}?\n\n/i,
+    /^Here(?:'s| is) the analysis:?\s*/i,
+    /^Sure[,!]?\s*here(?:'s| is)[\s\S]{0,200}?:\s*/i,
+    /^Okay[,!]?\s*here(?:'s| is)[\s\S]{0,200}?:\s*/i,
+    /^Prompt:?\s*/i,
+  ];
+  for (const re of badPrefixes) {
+    cleaned = cleaned.replace(re, "").trim();
+  }
+
+  // If the text contains "Let me think" or "We need to" or "Let's craft"
+  // anywhere — strip from that point to end (those are chain-of-thought)
+  const cotMarkers = [
+    /\n\nLet me /i,
+    /\n\nLet's /i,
+    /\n\nWe need to /i,
+    /\n\nI'll /i,
+    /\n\nI will /i,
+  ];
+  for (const re of cotMarkers) {
+    const m = cleaned.match(re);
+    if (m && cleaned.slice(0, m.index).length > 30) {
+      // There's text before the CoT marker — keep that part only
+      cleaned = cleaned.slice(0, m.index).trim();
+    }
+  }
+
+  // If text is in quotes (model sometimes outputs the analysis as a quoted string)
+  const quoteMatch = cleaned.match(/^["']([A-Z][\s\S]{50,1500})["']\.?$/);
+  if (quoteMatch) {
+    cleaned = quoteMatch[1].trim();
+  }
+
+  // Final cleanup — remove any remaining "Sure, " "Okay, " prefixes
+  cleaned = cleaned.replace(/^(?:Sure|Okay|Alright|Certainly|Of course)[,!:]\s*/i, "");
+
+  return cleaned;
 }
 
 // Honest fallback when no AI provider is available (all region-blocked or

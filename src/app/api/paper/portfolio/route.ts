@@ -17,7 +17,7 @@ export async function GET() {
     });
 
     // Fetch current prices from /api/psx/quote
-    const quoteRes = await fetch("" + getBaseUrl() + "/api/psx/quote", {
+    const quoteRes = await fetch(`${getBaseUrl()}/api/psx/quote`, {
       cache: "no-store",
     });
     const quoteJson = (await quoteRes.json()) as {
