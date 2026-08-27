@@ -334,7 +334,10 @@ export function PsxAlphaView() {
   const [screenerSort, setScreenerSort] = React.useState<SortKey>("volume");
   const [screenerSector, setScreenerSector] = React.useState<string>("");
   const [screenerFilter, setScreenerFilter] = React.useState<string>("");
-  const [screenerIncludeAll, setScreenerIncludeAll] = React.useState<boolean>(false);
+  // Default: show ALL listed stocks (not just traded ones) so the user sees
+  // the complete PSX universe. They can toggle to "Traded only" if they want
+  // to filter down to just today's movers.
+  const [screenerIncludeAll, setScreenerIncludeAll] = React.useState<boolean>(true);
   const [activeSection, setActiveSection] = React.useState<string>("overview");
   // AI ensemble + best trades state
   const [analyzeAll, setAnalyzeAll] = React.useState<{
@@ -1269,10 +1272,10 @@ export function PsxAlphaView() {
                       : "bg-background text-muted-foreground border-border/60 hover:bg-muted/40"
                   )}
                   title={screenerIncludeAll
-                    ? "Showing all PSX-listed companies (including non-traded)"
-                    : "Showing only today's traded scrips — click to show all 296 listed companies"}
+                    ? "Showing all 548 PSX-listed companies (including non-traded today). Click to filter to today's traded only."
+                    : "Showing only today's traded scrips. Click to show ALL listed companies (548 total)."}
                 >
-                  {screenerIncludeAll ? "✓ All listed" : "Traded only"}
+                  {screenerIncludeAll ? "✓ All 548 listed" : "Traded only"}
                 </button>
               </div>
             </div>
