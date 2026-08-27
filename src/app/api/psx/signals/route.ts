@@ -28,14 +28,14 @@ export async function GET() {
       throw new Error(quoteJson.error ?? "Quote unavailable");
     }
 
-    // Build candidate list: top 4 gainers + top 4 losers + top 4 by volume
+    // Build candidate list: top 6 gainers + top 6 losers + top 8 by volume
     // (KSE100 excluded — it's an index, not a tradable stock)
     const symbols = new Set<string>();
-    quoteJson.data.gainers.slice(0, 4).forEach((s) => symbols.add(s.symbol));
-    quoteJson.data.losers.slice(0, 4).forEach((s) => symbols.add(s.symbol));
+    quoteJson.data.gainers.slice(0, 6).forEach((s) => symbols.add(s.symbol));
+    quoteJson.data.losers.slice(0, 6).forEach((s) => symbols.add(s.symbol));
     [...quoteJson.data.scrips]
       .sort((a, b) => b.volume - a.volume)
-      .slice(0, 4)
+      .slice(0, 8)
       .forEach((s) => symbols.add(s.symbol));
 
     const all = Array.from(symbols);
@@ -67,7 +67,7 @@ export async function GET() {
             const controller = new AbortController();
             const timeout = setTimeout(() => controller.abort(), 30_000);
             const r = await fetch(
-              `" + getBaseUrl() + "/api/psx/analyze?symbol=${encodeURIComponent(sym)}`,
+              `${getBaseUrl()}/api/psx/analyze?symbol=${encodeURIComponent(sym)}`,
               { cache: "no-store", signal: controller.signal }
             );
             clearTimeout(timeout);

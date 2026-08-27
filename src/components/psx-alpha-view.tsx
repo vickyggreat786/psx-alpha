@@ -1439,6 +1439,7 @@ export function PsxAlphaView() {
                       </thead>
                       <tbody>
                         {analyzeAll.all
+                          .filter((a) => a.price > 0)  // hide any non-traded stocks with 0 price
                           .filter((a) => analysisFilter === "ALL" || a.action === analysisFilter)
                           .slice(0, 30)
                           .map((a) => {
