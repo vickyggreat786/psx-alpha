@@ -112,10 +112,10 @@ export async function GET() {
 
     const topBuy = allAnalyses
       .filter((a) => a.action === "BUY" && a.riskReward > 1.0)
-      .slice(0, 8);
+      .slice(0, 10);
     const topSell = allAnalyses
       .filter((a) => a.action === "SELL" && a.riskReward > 1.0)
-      .slice(0, 8);
+      .slice(0, 10);
 
     // Re-analyze top trades with REAL per-scrip history from DB (more accurate).
     // Falls back gracefully if DB has no history yet (uses blended candles).
@@ -146,8 +146,8 @@ export async function GET() {
       Promise.all(topSell.map(refreshWithRealCandles)),
     ]);
 
-    const topBuyFinal = topBuyRefreshed.filter((a) => a.action === "BUY" && a.riskReward > 1.0).slice(0, 8);
-    const topSellFinal = topSellRefreshed.filter((a) => a.action === "SELL" && a.riskReward > 1.0).slice(0, 8);
+    const topBuyFinal = topBuyRefreshed.filter((a) => a.action === "BUY" && a.riskReward > 1.0).slice(0, 10);
+    const topSellFinal = topSellRefreshed.filter((a) => a.action === "SELL" && a.riskReward > 1.0).slice(0, 10);
 
     // For each top trade, get multi-model consensus (only if 1+ providers configured).
     // We use a 25s timeout per consensus call so a single stuck AI provider

@@ -595,7 +595,7 @@ export function PsxAlphaView() {
   // Fetch screener rows (all scrips with full OHLCV + buy/sell ref)
   const fetchScreener = React.useCallback(async () => {
     try {
-      const params = new URLSearchParams({ limit: "300", sort: screenerSort });
+      const params = new URLSearchParams({ limit: "600", sort: screenerSort });
       if (screenerSector) params.set("sector", screenerSector);
       if (screenerIncludeAll) params.set("all", "1");
       if (screenerFilter.trim()) params.set("q", screenerFilter.trim());
@@ -1507,7 +1507,7 @@ export function PsxAlphaView() {
                         {analyzeAll.all
                           .filter((a) => a.price > 0)  // hide any non-traded stocks with 0 price
                           .filter((a) => analysisFilter === "ALL" || a.action === analysisFilter)
-                          .slice(0, 30)
+                          .slice(0, 100)
                           .map((a) => {
                             const actionColor = a.action === "BUY" ? "text-emerald-600 dark:text-emerald-400" : a.action === "SELL" ? "text-rose-600 dark:text-rose-400" : "text-amber-600 dark:text-amber-400";
                             const actionBg = a.action === "BUY" ? "bg-emerald-100 dark:bg-emerald-950/40" : a.action === "SELL" ? "bg-rose-100 dark:bg-rose-950/40" : "bg-amber-100 dark:bg-amber-950/40";
@@ -1539,7 +1539,7 @@ export function PsxAlphaView() {
                     </table>
                   </div>
                   <p className="text-[10px] text-muted-foreground text-center pt-2">
-                    Showing {analysisFilter === "ALL" ? (analyzeAll?.total ?? 0) : (analyzeAll?.all ?? []).filter(a => a.action === analysisFilter).length} {analysisFilter !== "ALL" ? analysisFilter : ""} stocks · Click row to view chart + trade plan
+                    Showing {Math.min(100, analysisFilter === "ALL" ? (analyzeAll?.total ?? 0) : (analyzeAll?.all ?? []).filter(a => a.price > 0 && a.action === analysisFilter).length)} of {analysisFilter === "ALL" ? (analyzeAll?.total ?? 0) : (analyzeAll?.all ?? []).filter(a => a.price > 0 && a.action === analysisFilter).length} {analysisFilter !== "ALL" ? analysisFilter : ""} stocks · Click row to view chart + trade plan
                   </p>
                 </>
               ) : (

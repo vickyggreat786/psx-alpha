@@ -28,14 +28,14 @@ export async function GET() {
       throw new Error(quoteJson.error ?? "Quote unavailable");
     }
 
-    // Build candidate list: top 6 gainers + top 6 losers + top 8 by volume
+    // Build candidate list: top 8 gainers + top 8 losers + top 12 by volume
     // (KSE100 excluded — it's an index, not a tradable stock)
     const symbols = new Set<string>();
-    quoteJson.data.gainers.slice(0, 6).forEach((s) => symbols.add(s.symbol));
-    quoteJson.data.losers.slice(0, 6).forEach((s) => symbols.add(s.symbol));
+    quoteJson.data.gainers.slice(0, 8).forEach((s) => symbols.add(s.symbol));
+    quoteJson.data.losers.slice(0, 8).forEach((s) => symbols.add(s.symbol));
     [...quoteJson.data.scrips]
       .sort((a, b) => b.volume - a.volume)
-      .slice(0, 8)
+      .slice(0, 12)
       .forEach((s) => symbols.add(s.symbol));
 
     const all = Array.from(symbols);
