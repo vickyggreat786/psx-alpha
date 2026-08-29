@@ -313,6 +313,42 @@ export function PsxAlphaView() {
   const [signals, setSignals] = React.useState<SignalRow[]>([]);
   const [ipos, setIpos] = React.useState<IpoItem[]>([]);
 
+  // Advanced strategies state — 5 strategies run on currently-selected stock
+  const [strategies, setStrategies] = React.useState<{
+    symbol: string;
+    candlesCount: number;
+    lastPrice: number;
+    consensus: string;
+    consensusConfidence: number;
+    buyCount: number;
+    sellCount: number;
+    neutralCount: number;
+    strategies: Array<{
+      name: string;
+      displayName: string;
+      match: boolean;
+      signal: "BUY" | "SELL" | "NEUTRAL";
+      confidence: number;
+      entry?: number;
+      stopLoss?: number;
+      target?: number;
+      riskReward?: number;
+      reasons: string[];
+      category: string;
+    }>;
+    bestSignal: {
+      displayName: string;
+      signal: "BUY" | "SELL" | "NEUTRAL";
+      confidence: number;
+      entry?: number;
+      stopLoss?: number;
+      target?: number;
+      riskReward?: number;
+      reasons: string[];
+    } | null;
+  } | null>(null);
+  const [loadingStrategies, setLoadingStrategies] = React.useState(false);
+
   // Default symbol — use the first available scrip from featured list (real stock, not KSE100 index)
   // KSE100 is an index, not a tradable stock — we don't show its trade plan
   const [symbol, setSymbol] = React.useState<string>("");
@@ -485,6 +521,32 @@ export function PsxAlphaView() {
     },
     [toast]
   );
+
+  // Fetch advanced strategies for current symbol (5 strategies)
+  const fetchStrategies = React.useCallback(async (sym: string) => {
+    if (sym === "KSE100") {
+      setStrategies(null);
+      return;
+    }
+    setLoadingStrategies(true);
+    try {
+      const res = await fetch(
+        `/api/psx/strategies?symbol=${encodeURIComponent(sym)}`,
+        { cache: "no-store" }
+      );
+      const json = await res.json();
+      if (json.ok) {
+        setStrategies(json.data);
+      } else {
+        setStrategies(null);
+      }
+    } catch (e) {
+      console.warn("Failed to fetch strategies:", e);
+      setStrategies(null);
+    } finally {
+      setLoadingStrategies(false);
+    }
+  }, []);
 
   // Fetch watchlist signals
   const fetchSignals = React.useCallback(async () => {
@@ -745,8 +807,9 @@ export function PsxAlphaView() {
   React.useEffect(() => {
     if (symbol) {
       fetchAnalysis(symbol);
+      fetchStrategies(symbol);
     }
-  }, [symbol, fetchAnalysis]);
+  }, [symbol, fetchAnalysis, fetchStrategies]);
 
   // Re-fetch signals every 2 min (was 5 min — faster updates)
   React.useEffect(() => {
@@ -758,7 +821,7 @@ export function PsxAlphaView() {
   // Maps nav item IDs to which section divs should be visible
   const sectionGroups: Record<string, string[]> = {
     overview: ["section-overview", "section-all-analysis"],
-    stocks: ["section-stocks", "section-chart", "section-analysis"],
+    stocks: ["section-stocks", "section-chart", "section-strategies", "section-analysis"],
     signals: ["section-signals"],
     safe: ["section-safe"],
     strategy: ["section-strategy"],
@@ -1604,6 +1667,149 @@ export function PsxAlphaView() {
                 <div className="text-sm text-muted-foreground py-4 text-center">
                   {loadingAnalysis ? "Analyzing…" : "Indicators unavailable"}
                 </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        {/* ---------- Advanced Strategies (5 pro strategies) ---------- */}
+        {/* Runs VWAP+Breakout Momentum, Mean Reversion (Bollinger), RSI Divergence,
+            Trend Pullback, Volatility Contraction on the selected stock's real
+            Yahoo Finance history. Shows per-strategy results + overall consensus. */}
+        <div id="section-strategies" style={{ display: isSectionVisible("section-strategies") ? undefined : "none" }}>
+          <Card className="border-violet-200/60 dark:border-violet-900/60">
+            <CardContent className="p-4 sm:p-5">
+              <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+                <div>
+                  <h4 className="text-sm font-semibold flex items-center gap-1.5">
+                    <Compass className="h-4 w-4 text-violet-600 dark:text-violet-400" />
+                    Advanced Strategies — {cleanSymbol(symbol || "—")}
+                  </h4>
+                  <p className="text-[10px] text-muted-foreground mt-0.5">
+                    5 pro strategies run on real Yahoo Finance history ({strategies?.candlesCount ?? 0} candles) · Live consensus from multi-strategy agreement
+                  </p>
+                </div>
+                {strategies && (
+                  <Badge variant="outline" className={cn(
+                    "text-[10px] font-semibold border-2",
+                    strategies.consensus === "STRONG_BUY" ? "bg-emerald-100 dark:bg-emerald-950/40 text-emerald-700 dark:text-emerald-300 border-emerald-500" :
+                    strategies.consensus === "BUY" ? "bg-emerald-50 dark:bg-emerald-950/30 text-emerald-700 dark:text-emerald-300 border-emerald-400" :
+                    strategies.consensus === "STRONG_SELL" ? "bg-rose-100 dark:bg-rose-950/40 text-rose-700 dark:text-rose-300 border-rose-500" :
+                    strategies.consensus === "SELL" ? "bg-rose-50 dark:bg-rose-950/30 text-rose-700 dark:text-rose-300 border-rose-400" :
+                    "bg-amber-50 dark:bg-amber-950/30 text-amber-700 dark:text-amber-300 border-amber-400"
+                  )}>
+                    {strategies.consensus.replace("_", " ")} ({strategies.consensusConfidence.toFixed(0)}%)
+                  </Badge>
+                )}
+              </div>
+
+              {loadingStrategies ? (
+                <div className="text-center py-6 text-sm text-muted-foreground flex items-center justify-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Running 5 strategies on {cleanSymbol(symbol || "—")}...
+                </div>
+              ) : !strategies ? (
+                <div className="text-center py-6 text-sm text-muted-foreground">
+                  Select a stock to run advanced strategies.
+                </div>
+              ) : strategies.strategies.length === 0 ? (
+                <div className="rounded-lg border border-amber-200/60 bg-amber-50/30 dark:bg-amber-950/10 p-3 text-[11px] text-amber-700 dark:text-amber-300 text-center">
+                  {strategies.message || "Not enough candle history for strategy analysis. Needs ≥35 days."}
+                </div>
+              ) : (
+                <>
+                  {/* Consensus summary */}
+                  <div className="grid grid-cols-3 gap-2 mb-3">
+                    <div className="rounded-md border border-emerald-200/40 dark:border-emerald-800/40 bg-emerald-50/30 dark:bg-emerald-950/10 p-2 text-center">
+                      <p className="text-[10px] text-muted-foreground">BUY signals</p>
+                      <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400 tabular-nums">{strategies.buyCount}</p>
+                    </div>
+                    <div className="rounded-md border border-amber-200/40 dark:border-amber-800/40 bg-amber-50/30 dark:bg-amber-950/10 p-2 text-center">
+                      <p className="text-[10px] text-muted-foreground">NEUTRAL</p>
+                      <p className="text-lg font-bold text-amber-600 dark:text-amber-400 tabular-nums">{strategies.neutralCount}</p>
+                    </div>
+                    <div className="rounded-md border border-rose-200/40 dark:border-rose-800/40 bg-rose-50/30 dark:bg-rose-950/10 p-2 text-center">
+                      <p className="text-[10px] text-muted-foreground">SELL signals</p>
+                      <p className="text-lg font-bold text-rose-600 dark:text-rose-400 tabular-nums">{strategies.sellCount}</p>
+                    </div>
+                  </div>
+
+                  {/* Per-strategy cards */}
+                  <div className="space-y-2">
+                    {strategies.strategies.map((s, i) => {
+                      const sigColor = s.signal === "BUY" ? "text-emerald-600 dark:text-emerald-400" :
+                                       s.signal === "SELL" ? "text-rose-600 dark:text-rose-400" :
+                                       "text-amber-600 dark:text-amber-400";
+                      const sigBg = s.signal === "BUY" ? "bg-emerald-100 dark:bg-emerald-950/40" :
+                                    s.signal === "SELL" ? "bg-rose-100 dark:bg-rose-950/40" :
+                                    "bg-amber-100 dark:bg-amber-950/40";
+                      const catColor = s.category === "momentum" ? "text-violet-600 dark:text-violet-400" :
+                                       s.category === "mean-reversion" ? "text-blue-600 dark:text-blue-400" :
+                                       s.category === "divergence" ? "text-purple-600 dark:text-purple-400" :
+                                       s.category === "trend" ? "text-emerald-600 dark:text-emerald-400" :
+                                       "text-amber-600 dark:text-amber-400";
+                      return (
+                        <div
+                          key={i}
+                          className={cn(
+                            "rounded-md border p-2.5",
+                            s.match
+                              ? "border-border/60 bg-muted/20"
+                              : "border-dashed border-border/40 bg-muted/10 opacity-70"
+                          )}
+                        >
+                          <div className="flex items-center justify-between gap-2 mb-1 flex-wrap">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <span className="text-[11px] font-medium truncate">{s.displayName}</span>
+                              <span className={cn("text-[9px] uppercase tracking-wide", catColor)}>
+                                {s.category.replace("-", " ")}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5 shrink-0">
+                              <span className={cn("inline-block px-1.5 py-0 rounded text-[9px] font-bold", sigBg, sigColor)}>
+                                {s.signal}
+                              </span>
+                              {s.match && s.confidence > 0 && (
+                                <span className="text-[9px] text-muted-foreground tabular-nums">
+                                  {s.confidence.toFixed(0)}%
+                                </span>
+                              )}
+                              {s.match && s.entry && s.stopLoss && s.target && (
+                                <span className="text-[9px] text-muted-foreground tabular-nums">
+                                  · 1:{s.riskReward?.toFixed(1)}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          {s.match && s.entry && s.stopLoss && s.target && (
+                            <div className="grid grid-cols-3 gap-1 text-[10px] mt-1 mb-1.5">
+                              <div><span className="text-muted-foreground">Entry: </span><span className="font-medium tabular-nums">{s.entry.toFixed(2)}</span></div>
+                              <div><span className="text-muted-foreground">Stop: </span><span className="font-medium tabular-nums text-rose-600 dark:text-rose-400">{s.stopLoss.toFixed(2)}</span></div>
+                              <div><span className="text-muted-foreground">Target: </span><span className="font-medium tabular-nums text-emerald-600 dark:text-emerald-400">{s.target.toFixed(2)}</span></div>
+                            </div>
+                          )}
+                          <ul className="space-y-0.5 text-[10px] text-muted-foreground">
+                            {s.reasons.slice(0, 4).map((r, j) => (
+                              <li key={j} className="leading-snug">{r}</li>
+                            ))}
+                          </ul>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Best signal highlight */}
+                  {strategies.bestSignal && strategies.bestSignal.signal !== "NEUTRAL" && (
+                    <div className="mt-3 rounded-md border-2 border-violet-300 dark:border-violet-700 bg-violet-50/40 dark:bg-violet-950/20 p-2.5">
+                      <p className="text-[10px] font-semibold text-violet-700 dark:text-violet-300 mb-1">
+                        🏆 Best Signal: {strategies.bestSignal.displayName}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">
+                        {strategies.bestSignal.reasons[0]}
+                      </p>
+                    </div>
+                  )}
+                </>
               )}
             </CardContent>
           </Card>
