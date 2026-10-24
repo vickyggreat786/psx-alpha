@@ -83,6 +83,19 @@ async function fetchPsxSummary(): Promise<PsxSummary> {
       "[psx/quote] direct HTTP fetch failed, falling back to z-ai:",
       e instanceof Error ? e.message : "unknown"
     );
+    // RESILIENCE: If PSX direct fetch fails AND we have any cached data,
+    // return the stale cache (up to 24h old) instead of failing completely.
+    // This keeps the app functional during PSX server outages.
+    if (cached.data && Date.now() - cached.at < STALE_CACHE_TTL_MS) {
+      console.warn("[psx/quote] using stale cached data (PSX direct failed)");
+      return cached.data;
+    }
+  }
+
+  // If z-ai is not available and we have stale cache, use it (24h TTL)
+  if (cached.data && Date.now() - cached.at < STALE_CACHE_TTL_MS) {
+    console.warn("[psx/quote] using stale cached data (z-ai unavailable)");
+    return cached.data;
   }
 
   if (isRateLimited()) {
