@@ -1,6 +1,7 @@
 import { getBaseUrl } from "@/lib/base-url";
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { DEFAULT_RISK_CONFIG } from "@/lib/risk";
 
 export const dynamic = "force-dynamic";
 
@@ -42,7 +43,7 @@ export async function GET() {
     let openValue = 0;
     let investedValue = 0;
     let totalPnl = 0;
-    const enrichedPositions = positions.map((p) => {
+    const enrichedPositions = openPositions.map((p) => {
       const currentPrice = findPrice(p.symbol) ?? p.entryPrice;
       const value = p.qty * currentPrice;
       const cost = p.qty * p.entryPrice;
@@ -67,18 +68,26 @@ export async function GET() {
 
     const cashAvailable = DEFAULT_RISK_CONFIG.capital - investedValue;
 
+    // Realized P&L from closed positions
+    let realizedPnl = 0;
+    for (const p of closedPositions) {
+      realizedPnl += (p.exitPrice - p.entryPrice) * p.qty;
+    }
+
     return NextResponse.json({
       ok: true,
       data: {
-        positions: openPositions,
+        positions: enrichedPositions,
         recentClosed: closedPositions,
-        capital: 1_000_000,
-        invested,
-        cash: 1_000_000 - invested,
-        currentValue: invested,
-        unrealizedPnl: 0,
-        unrealizedPct: 0,
-        totalValue: 1_000_000,
+        capital: DEFAULT_RISK_CONFIG.capital,
+        invested: investedValue,
+        cash: cashAvailable,
+        currentValue: openValue,
+        unrealizedPnl: totalPnl,
+        unrealizedPct:
+          investedValue > 0 ? (totalPnl / investedValue) * 100 : 0,
+        realizedPnl,
+        totalValue: cashAvailable + openValue,
         openCount: openPositions.length,
         closedCount: closedPositions.length,
       },
@@ -96,6 +105,7 @@ export async function GET() {
         currentValue: 0,
         unrealizedPnl: 0,
         unrealizedPct: 0,
+        realizedPnl: 0,
         totalValue: 1_000_000,
         openCount: 0,
         closedCount: 0,

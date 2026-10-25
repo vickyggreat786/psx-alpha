@@ -1,36 +1,27 @@
 import { NextResponse } from "next/server";
-import {
-  TWELVE_DATA_PSX_LIST,
-  type TwelveDataStock,
-} from "@/lib/twelve-data-list";
 import { PSX_SECTORS, LISTED_COMPANIES } from "@/lib/psx-listings";
 
 export const dynamic = "force-dynamic";
 
-// GET /api/psx/listings — returns ALL PSX-listed companies from Twelve Data's
-// authoritative list (459 companies). Live prices come from /api/psx/quote
-// (which merges this list with live psx.com.pk data).
+// GET /api/psx/listings — returns ALL PSX-listed companies from the OFFICIAL
+// PSX list (auto-generated from psx.com.pk — symbols match the PSX website
+// exactly). Live prices come from /api/psx/quote.
 export async function GET() {
   return NextResponse.json({
     ok: true,
     data: {
-      total: TWELVE_DATA_PSX_LIST.length,
-      source: "Twelve Data /stocks?country=Pakistan",
-      companies: TWELVE_DATA_PSX_LIST.map((s) => ({
+      total: LISTED_COMPANIES.length,
+      source: "psx.com.pk market-summary (official data-srip symbols)",
+      companies: LISTED_COMPANIES.map((s) => ({
         symbol: s.symbol,
         name: s.name,
-        sector: "PSX",
-        exchange: s.exchange,
-        mic_code: s.mic_code,
-        currency: s.currency,
-        type: s.type,
+        sector: s.sector,
       })),
+      sectors: PSX_SECTORS,
       note:
-        `Authoritative PSX-listed companies from Twelve Data (${TWELVE_DATA_PSX_LIST.length} total). ` +
-        "Twelve Data covers the entire Pakistan Stock Exchange universe. " +
-        "For sector classifications, we use our curated list of " +
-        LISTED_COMPANIES.length + " companies mapped to PSX's " +
-        PSX_SECTORS.length + " sectoral categories.",
+        `Official PSX-listed companies (${LISTED_COMPANIES.length} total across ` +
+        PSX_SECTORS.length + " sectoral categories), sourced directly from " +
+        "psx.com.pk's market summary. Symbols match the PSX website exactly.",
     },
   });
 }

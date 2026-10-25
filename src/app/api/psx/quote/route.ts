@@ -17,6 +17,7 @@ import {
   lookupSector,
   lookupName,
   stripFuturesSuffix,
+  cleanCompanyName,
 } from "@/lib/psx-listings";
 
 export const dynamic = "force-dynamic";
@@ -37,12 +38,13 @@ async function fetchPsxSummary(): Promise<PsxSummary> {
 
   try {
     const direct = await fetchPsxDirect();
-    // For each scrip from PSX, assign the proper sector using the curated
-    // list. Many scrips come back labelled "FUTURE CONTRACTS" because today's
-    // market summary lists them as -AUG/-SEP contracts — we map them back to
-    // their underlying's real sector (e.g. AICL-AUG → INSURANCE).
+    // Each scrip already carries the OFFICIAL PSX ticker (data-srip attribute)
+    // and the company name straight from the PSX website. We still pass the
+    // sector through lookupSector so futures contracts (-AUG/-SEP) map to
+    // their underlying's real sector (e.g. AICL-OCTB → INSURANCE).
     const scrips = direct.scrips.map((s) => ({
       symbol: s.symbol,
+      companyName: s.companyName,
       ldcp: s.ldcp,
       open: s.open,
       high: s.high,
@@ -64,7 +66,7 @@ async function fetchPsxSummary(): Promise<PsxSummary> {
       indices,
       scrips,
       fetchedAt: direct.fetchedAt,
-      source: direct.source + " (direct HTTP)",
+      source: direct.source + " (direct HTTP · " + direct.parserMode + " parser)",
     };
     if (parsed.indices.length > 0 || parsed.scrips.length > 0) {
       cached = { data: parsed, at: Date.now() };
@@ -130,11 +132,13 @@ async function fetchPsxSummary(): Promise<PsxSummary> {
 }
 
 function scripToStock(s: {
-  symbol: string; ldcp: number; open: number; high: number; low: number;
+  symbol: string; companyName?: string; ldcp: number; open: number; high: number; low: number;
   current: number; change: number; changePct: number; volume: number; sector: string;
 }) {
   const clean = stripFuturesSuffix(s.symbol).toUpperCase();
-  const name = lookupName(s.symbol) ?? clean;
+  // Prefer the LIVE company name from the PSX website (data-srip row text),
+  // then the official static list, then fall back to the ticker itself.
+  const name = (s.companyName ? cleanCompanyName(s.companyName) : null) ?? lookupName(s.symbol) ?? clean;
   return {
     symbol: s.symbol,
     name,
@@ -163,61 +167,71 @@ export async function GET() {
       }
     }
 
-    // Merge live traded scrips with the curated list of ALL PSX-listed
-    // companies. Stocks that did NOT trade today still appear in the result
-    // with their last-known symbol + sector, but with `traded: false` and
-    // zero OHLC. This gives the user the complete PSX listing view.
+    // Merge live traded scrips with the OFFICIAL list of ALL PSX-listed
+    // companies (auto-generated from psx.com.pk — symbols match the PSX
+    // website exactly). Stocks that did NOT trade today still appear with
+    // their official symbol + sector, but with `traded: false` and zero OHLC.
     const liveSymbols = new Map<string, typeof summary.scrips[0] & { sector: string }>();
     for (const [clean, s] of seenScrips.entries()) liveSymbols.set(clean, s);
 
-    // Add all PSX-listed companies from Twelve Data's authoritative list,
-    // classified by sector using curated list + heuristic name-based rules.
-    const tdStocks = getAllClassifiedStocks();
-    const tdStockMap = new Map<string, { symbol: string; name: string; sector: string }>();
-    for (const s of tdStocks) {
-      tdStockMap.set(s.symbol.toUpperCase(), {
-        symbol: s.symbol,
-        name: s.name,
-        sector: s.sector,
+    // PRIMARY universe = official PSX list (data-srip from psx.com.pk).
+    const officialMap = new Map<string, { symbol: string; name: string; sector: string }>();
+    for (const c of LISTED_COMPANIES) {
+      officialMap.set(c.symbol.toUpperCase(), {
+        symbol: c.symbol,
+        name: c.name,
+        sector: c.sector,
       });
+    }
+
+    // SECONDARY = Twelve Data list (fills any official-list gaps, e.g.
+    // scrips that didn't appear in today's market summary).
+    const tdStocks = getAllClassifiedStocks();
+    for (const s of tdStocks) {
+      const key = s.symbol.toUpperCase();
+      if (!officialMap.has(key)) {
+        officialMap.set(key, { symbol: s.symbol, name: s.name, sector: s.sector });
+      }
     }
 
     type MergedStock = ReturnType<typeof scripToStock> & { traded: boolean };
     const mergedStocks: MergedStock[] = [];
-    const seenInCurated = new Set<string>();
+    const seenInUniverse = new Set<string>();
 
-    for (const [clean, tdInfo] of tdStockMap.entries()) {
-      if (seenInCurated.has(clean)) continue;
-      seenInCurated.add(clean);
+    for (const [clean, uni] of officialMap.entries()) {
+      if (seenInUniverse.has(clean)) continue;
+      seenInUniverse.add(clean);
       const live = liveSymbols.get(clean);
       if (live) {
-        // Live traded on PSX — use that price but Twelve Data's name + sector
+        // Live traded on PSX — official PSX prices + PSX website company name
+        // (cleaned of XD/CB markers). Sector from the official list.
+        const stock = scripToStock(live);
         mergedStocks.push({
-          ...scripToStock(live),
-          name: tdInfo.name,
-          sector: tdInfo.sector,
+          ...stock,
+          name: uni.name !== uni.symbol ? uni.name : stock.name,
+          sector: uni.sector,
           traded: true,
         });
       } else {
-        // Not traded today — show as listed with no price (will be fetched
-        // by /api/psx/candles when user clicks on it)
+        // Not traded today — official symbol + sector, no price (candles API
+        // fetches history when the user clicks on it)
         mergedStocks.push({
-          symbol: tdInfo.symbol,
-          name: tdInfo.name,
+          symbol: uni.symbol,
+          name: uni.name,
           cleanSymbol: clean,
           price: 0, change: 0, changePct: 0, volume: 0,
           bid: 0, ask: 0, high52: 0, low52: 0,
           ldcp: 0, open: 0, high: 0, low: 0,
-          sector: tdInfo.sector,
+          sector: uni.sector,
           traded: false,
         });
       }
     }
 
-    // Also include any live-traded symbols from PSX direct that weren't in
-    // Twelve Data's list (shouldn't happen, but just in case)
+    // Also include any live-traded symbols from PSX direct that aren't in the
+    // universe maps (new listings, ETFs, etc.)
     for (const [clean, s] of liveSymbols.entries()) {
-      if (!seenInCurated.has(clean)) {
+      if (!seenInUniverse.has(clean)) {
         mergedStocks.push({ ...scripToStock(s), traded: true });
       }
     }
@@ -284,7 +298,7 @@ export async function GET() {
         scrips: mergedStocks,
         totalListed: mergedStocks.length,
         totalTraded: traded.length,
-        totalPSXListed: tdStocks.length,
+        totalPSXListed: LISTED_COMPANIES.length,
         uniqueUnderlyings: seenScrips.size,
         tdRealtimeQuotes: tdQuoteCount,
         tdEnabled: hasTwelveDataKey(),

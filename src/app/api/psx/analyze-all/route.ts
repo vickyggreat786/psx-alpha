@@ -5,6 +5,8 @@ import type { Candle } from "@/lib/indicators";
 import { loadScripCandles, todayCandleFromQuote } from "@/lib/scrip-history";
 import { fetchYahooCandles } from "@/lib/yahoo-finance";
 import { stripFuturesSuffix } from "@/lib/psx-listings";
+import { isRateLimited, getRateLimitedUntil } from "@/lib/zai-ratelimit";
+import { getConfiguredProviders, getProxyBase } from "@/lib/ai-ensemble";
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
@@ -211,6 +213,12 @@ export async function GET() {
         top_sell: sellSignals,
         top_hold: holdSignals,
         all: analyses,
+        aiStatus: {
+          rateLimited: isRateLimited(),
+          retryInSec: isRateLimited() ? Math.max(0, Math.ceil((getRateLimitedUntil() - Date.now()) / 1000)) : 0,
+          providers: getConfiguredProviders().filter((p) => p.available).map((p) => p.id),
+          proxy: getProxyBase() || null,
+        },
         fetchedAt: new Date().toISOString(),
       },
     });

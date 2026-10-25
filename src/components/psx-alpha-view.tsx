@@ -39,6 +39,7 @@ import {
   Trophy,
   Flame,
   Layers,
+  Sparkles,
 } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -386,6 +387,12 @@ export function PsxAlphaView() {
     top_buy: ScripAnalysisRow[];
     top_sell: ScripAnalysisRow[];
     all: ScripAnalysisRow[];
+    aiStatus?: {
+      rateLimited: boolean;
+      retryInSec: number;
+      providers: string[];
+      proxy: string | null;
+    };
   } | null>(null);
   const [bestTrades, setBestTrades] = React.useState<{
     capital: number;
@@ -1051,6 +1058,27 @@ export function PsxAlphaView() {
             </div>
           </div>
           <div className="flex items-center gap-1.5 sm:gap-2">
+            {analyzeAll?.aiStatus && (
+              <Badge
+                variant="outline"
+                className={cn(
+                  "gap-1 font-medium text-[10px] hidden md:inline-flex",
+                  analyzeAll.aiStatus.rateLimited
+                    ? "bg-amber-50 text-amber-700 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-900"
+                    : "bg-violet-50 text-violet-700 border-violet-200 dark:bg-violet-950/40 dark:text-violet-300 dark:border-violet-900"
+                )}
+                title={
+                  analyzeAll.aiStatus.rateLimited
+                    ? `GLM-4 rate-limited — auto-retry in ${analyzeAll.aiStatus.retryInSec}s. Technical analysis continues meanwhile.`
+                    : `AI active via: ${analyzeAll.aiStatus.providers.join(", ")}`
+                }
+              >
+                <Sparkles className={cn("h-3 w-3", !analyzeAll.aiStatus.rateLimited && "text-violet-500")} />
+                {analyzeAll.aiStatus.rateLimited
+                  ? `AI ${Math.ceil(analyzeAll.aiStatus.retryInSec / 60)}m`
+                  : "AI ON"}
+              </Badge>
+            )}
             {connectionStatus && (
               <Badge
                 variant="outline"

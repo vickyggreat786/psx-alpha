@@ -1,19 +1,30 @@
-// Sector classifier for PSX stocks — uses both the curated list AND
-// heuristic name-based classification to fill in sectors for stocks that
-// aren't in the curated list.
+// Sector classifier for PSX stocks — uses the OFFICIAL PSX list (auto-
+// generated from psx.com.pk) as the primary source, Twelve Data's list as a
+// secondary universe, and heuristic name-based classification to fill gaps.
 
 import {
   LISTED_COMPANIES,
-  PSX_SECTORS,
+  cleanCompanyName,
 } from "./psx-listings";
 import { TWELVE_DATA_PSX_LIST } from "./twelve-data-list";
 
-// Curated symbol → sector map (fast lookup)
+// Official PSX symbol → sector map (fast lookup)
 const CURATED_SECTOR_MAP: Map<string, string> = (() => {
   const m = new Map<string, string>();
   for (const c of LISTED_COMPANIES) {
     if (!m.has(c.symbol.toUpperCase())) {
       m.set(c.symbol.toUpperCase(), c.sector);
+    }
+  }
+  return m;
+})();
+
+// Official PSX symbol → company name map
+const CURATED_NAME_MAP: Map<string, string> = (() => {
+  const m = new Map<string, string>();
+  for (const c of LISTED_COMPANIES) {
+    if (!m.has(c.symbol.toUpperCase())) {
+      m.set(c.symbol.toUpperCase(), c.name);
     }
   }
   return m;
@@ -44,7 +55,7 @@ const SECTOR_RULES: Array<{ re: RegExp; sector: string }> = [
   { re: /power|electric|k-electric|hub power|kot addu|nishat power|nishat chunian|pakgen|jpvc|japan power|gadoon power|altern energy|atlas power/i, sector: "POWER GENERATION & DISTRIBUTION" },
   // Pharma
   { re: /pharma|agp|searle|abbott|glaxo|wyeth|ferozson|highnoon|abbot labs|faisal pharma|om pharma|cypress|sapphire pharma/i, sector: "PHARMACEUTICALS" },
-  // Cement (already covered) - Engineering/Steel
+  // Engineering/Steel
   { re: /steel|iron|metal|amreli|aisha steel|international steel|international industries|mughal iron|crescent steel|kohinoor steel/i, sector: "ENGINEERING" },
   // Engineering misc
   { re: /engineering|siemens|kSB pumps|agriauto|millat|treet battery|atlas battery|exide|general tyre|hino|hinopak|bela auto|loads|sazew|sazgar/i, sector: "ENGINEERING" },
@@ -103,7 +114,7 @@ const SECTOR_RULES: Array<{ re: RegExp; sector: string }> = [
 // Classify a stock's sector based on its name. Returns the first matching rule,
 // or null if no rule matches.
 export function classifySectorByCompany(symbol: string, name: string): string | null {
-  // First, check the curated list
+  // First, check the official PSX list
   const curated = CURATED_SECTOR_MAP.get(symbol.toUpperCase());
   if (curated) return curated;
 
@@ -116,8 +127,9 @@ export function classifySectorByCompany(symbol: string, name: string): string | 
   return null;
 }
 
-// Get all PSX-listed companies (Twelve Data list) with classified sectors.
-// Falls back to "OTHER" if no rule matches.
+// Get all PSX-listed companies with classified sectors.
+// PRIMARY universe = official PSX list; Twelve Data fills any gaps.
+// Falls back to "MISCELLANEOUS" if no rule matches.
 export interface ClassifiedStock {
   symbol: string;
   name: string;
@@ -128,6 +140,16 @@ export interface ClassifiedStock {
 export function getAllClassifiedStocks(): ClassifiedStock[] {
   const result: ClassifiedStock[] = [];
   const seen = new Set<string>();
+
+  // 1. Official PSX list first — authoritative symbols + names + sectors
+  for (const c of LISTED_COMPANIES) {
+    const sym = c.symbol.toUpperCase();
+    if (seen.has(sym)) continue;
+    seen.add(sym);
+    result.push({ symbol: c.symbol, name: c.name, sector: c.sector, source: "curated" });
+  }
+
+  // 2. Twelve Data list — adds companies missing from today's market summary
   for (const s of TWELVE_DATA_PSX_LIST) {
     const sym = s.symbol.toUpperCase();
     if (seen.has(sym)) continue;
@@ -140,14 +162,14 @@ export function getAllClassifiedStocks(): ClassifiedStock[] {
       if (heuristic) {
         result.push({ symbol: s.symbol, name: s.name, sector: heuristic, source: "heuristic" });
       } else {
-        result.push({ symbol: s.symbol, name: s.name, sector: "MISCELLANEOUS", source: "other" });
+        result.push({ symbol: s.symbol, name: cleanCompanyName(s.name), sector: "MISCELLANEOUS", source: "other" });
       }
     }
   }
   return result;
 }
 
-// Quick lookup: symbol → sector (uses curated + heuristic, falls back to MISCELLANEOUS)
+// Quick lookup: symbol → sector (official list first, then heuristic, else MISCELLANEOUS)
 const SECTOR_LOOKUP_MAP: Map<string, string> = (() => {
   const m = new Map<string, string>();
   for (const c of getAllClassifiedStocks()) {
