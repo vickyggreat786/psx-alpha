@@ -37,14 +37,15 @@ function avgBodySize(candles: Candle[], lookback = 10): number {
   return n > 0 ? sum / n : 0;
 }
 
-export function detectPatterns(candles: Candle[]): PatternMatch[] {
+// Detect patterns anchored at a specific index (uses candles[i], [i-1], [i-2]).
+function matchAt(candles: Candle[], i: number): PatternMatch[] {
   const out: PatternMatch[] = [];
-  if (candles.length < 3) return out;
+  if (i < 2 || i >= candles.length) return out;
 
-  const c0 = candles[candles.length - 1]; // latest
-  const c1 = candles[candles.length - 2];
-  const c2 = candles[candles.length - 3];
-  const avgBody = avgBodySize(candles, 10);
+  const c0 = candles[i]; // candle at index i
+  const c1 = candles[i - 1];
+  const c2 = candles[i - 2];
+  const avgBody = avgBodySize(candles.slice(0, i + 1), 10);
 
   // ===== Bullish Engulfing =====
   // Prev red, curr green, curr body engulfs prev body completely.
@@ -341,6 +342,51 @@ export function detectPatterns(candles: Candle[]): PatternMatch[] {
   }
 
   return out;
+}
+
+// Latest-candle pattern detection (used by analyze API + composite signal)
+export function detectPatterns(candles: Candle[]): PatternMatch[] {
+  if (candles.length < 3) return [];
+  return matchAt(candles, candles.length - 1);
+}
+
+// ---------- Historical pattern events (Chart Reader) ----------
+export interface PatternEvent extends PatternMatch {
+  /** ISO date (or #index fallback) of the candle where the pattern completed */
+  date: string;
+  /** Index of the pattern's completing candle in the source array */
+  index: number;
+}
+
+const STRENGTH_RANK: Record<PatternStrength, number> = {
+  weak: 0,
+  moderate: 1,
+  strong: 2,
+};
+
+// Scan the last `lookback` candles for candlestick pattern occurrences.
+// Returns the most recent `maxEvents` events, newest first.
+// Weak patterns (Doji / Spinning Top) are excluded by default to keep the
+// chart markers and reader panel meaningful.
+export function detectPatternEvents(
+  candles: Candle[],
+  lookback = 60,
+  maxEvents = 10,
+  minStrength: PatternStrength = "moderate"
+): PatternEvent[] {
+  const out: PatternEvent[] = [];
+  if (candles.length < 3) return out;
+  const startIdx = Math.max(2, candles.length - lookback);
+  for (let i = startIdx; i < candles.length; i++) {
+    for (const m of matchAt(candles, i)) {
+      if (STRENGTH_RANK[m.strength] < STRENGTH_RANK[minStrength]) continue;
+      const prev = out[out.length - 1];
+      // Skip immediate repeats of the same pattern within 2 candles
+      if (prev && prev.name === m.name && i - prev.index <= 2) continue;
+      out.push({ ...m, date: candles[i].date ?? `#${i}`, index: i });
+    }
+  }
+  return out.slice(-maxEvents).reverse();
 }
 
 // ---------- Composite signal from indicators + patterns ----------

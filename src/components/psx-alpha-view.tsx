@@ -57,6 +57,8 @@ import {
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ProfessionalChart } from "@/components/professional-chart";
 import { cleanSymbol } from "@/lib/symbol-utils";
+import { detectPatternEvents } from "@/lib/patterns";
+import { computeSrLevels } from "@/lib/indicators";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
@@ -311,6 +313,11 @@ export function PsxAlphaView() {
   const [candles, setCandles] = React.useState<Candle[]>([]);
   const [analysisCandles, setAnalysisCandles] = React.useState<Candle[]>([]);
   const [analysis, setAnalysis] = React.useState<AnalysisData | null>(null);
+  // Which symbol the stored analysis / analysis-candles belong to (guards
+  // against slow responses overwriting newer symbols' data)
+  const [analysisFor, setAnalysisFor] = React.useState<string>("KSE100");
+  const [analysisCandlesFor, setAnalysisCandlesFor] = React.useState<string>("KSE100");
+  const analyzeReqRef = React.useRef(0);
   const [signals, setSignals] = React.useState<SignalRow[]>([]);
   const [ipos, setIpos] = React.useState<IpoItem[]>([]);
 
@@ -321,6 +328,7 @@ export function PsxAlphaView() {
     lastPrice: number;
     consensus: string;
     consensusConfidence: number;
+    message?: string;
     buyCount: number;
     sellCount: number;
     neutralCount: number;
@@ -354,6 +362,29 @@ export function PsxAlphaView() {
   // KSE100 is an index, not a tradable stock — we don't show its trade plan
   const [symbol, setSymbol] = React.useState<string>("");
   const [search, setSearch] = React.useState("");
+
+  // Chart Reader — pattern events + support/resistance computed client-side
+  // from the same real candle history the chart shows.
+  const readerCandles =
+    symbol === "KSE100"
+      ? candles
+      : analysisCandlesFor === symbol
+      ? analysisCandles
+      : [];
+  const chartReader = React.useMemo(() => {
+    if (!readerCandles || readerCandles.length < 5) return null;
+    const events = detectPatternEvents(readerCandles, 60, 8, "moderate");
+    const sr = computeSrLevels(readerCandles, 120);
+    const bull = events.filter((e) => e.type === "bullish").length;
+    const bear = events.filter((e) => e.type === "bearish").length;
+    const neutral = events.filter((e) => e.type === "neutral").length;
+    return { events, sr, bull, bear, neutral };
+  }, [readerCandles]);
+
+  // Analysis is only trustworthy when it belongs to the currently-selected
+  // symbol (slow AI responses for an old symbol must never render here).
+  const analysisCurrent =
+    analysis && analysisFor === symbol ? analysis : null;
 
   const [loadingQuote, setLoadingQuote] = React.useState(true);
   const [loadingCandles, setLoadingCandles] = React.useState(true);
@@ -469,6 +500,7 @@ export function PsxAlphaView() {
   // Fetch analysis for current symbol
   const fetchAnalysis = React.useCallback(
     async (sym: string) => {
+      const reqId = ++analyzeReqRef.current;
       setLoadingAnalysis(true);
       try {
         // Fetch analysis (indicators + AI summary + DB-cached candles)
@@ -477,11 +509,15 @@ export function PsxAlphaView() {
           { cache: "no-store" }
         );
         const json = await res.json();
+        // Drop out-of-order responses (a newer symbol request superseded this one)
+        if (reqId !== analyzeReqRef.current) return;
         if (json.ok) {
           setAnalysis(json.data);
+          setAnalysisFor(sym);
           // Extract per-scrip candles for chart (non-KSE100)
           if (json.data.candles && json.data.candles.length > 0) {
             setAnalysisCandles(json.data.candles);
+            setAnalysisCandlesFor(sym);
           }
 
           // For non-KSE100 scrips, also fetch REAL Yahoo Finance historical
@@ -504,6 +540,7 @@ export function PsxAlphaView() {
                   // Prefer Yahoo's real history if we got at least 5 candles
                   if (cdJson.data.candles.length >= 5) {
                     setAnalysisCandles(cdJson.data.candles);
+                    setAnalysisCandlesFor(sym);
                   }
                 }
               } catch (e) {
@@ -860,15 +897,15 @@ export function PsxAlphaView() {
 
   const isIndex = symbol === "KSE100";
   const idxOrStock = isIndex ? kse100 : currentStock;
-  const change = idxOrStock?.change ?? (analysis?.indicators?.price && analysis.indicators.closePrev
-    ? analysis.indicators.price - analysis.indicators.closePrev
+  const change = idxOrStock?.change ?? (analysisCurrent?.indicators?.price && analysisCurrent.indicators.closePrev
+    ? analysisCurrent.indicators.price - analysisCurrent.indicators.closePrev
     : 0);
-  const changePct = idxOrStock?.changePct ?? (analysis?.indicators?.closePrev
-    ? ((analysis.indicators.price - analysis.indicators.closePrev) / analysis.indicators.closePrev) * 100
+  const changePct = idxOrStock?.changePct ?? (analysisCurrent?.indicators?.closePrev
+    ? ((analysisCurrent.indicators.price - analysisCurrent.indicators.closePrev) / analysisCurrent.indicators.closePrev) * 100
     : 0);
   const isUp = change >= 0;
   const priceOrValue = isIndex
-    ? kse100?.value ?? analysis?.indicators?.price ?? candles.at(-1)?.close ?? 0
+    ? kse100?.value ?? analysisCurrent?.indicators?.price ?? candles.at(-1)?.close ?? 0
     : currentStock?.price ?? 0;
 
   // Chart data with indicators overlay
@@ -880,10 +917,10 @@ export function PsxAlphaView() {
       low: c.low,
       close: c.close,
       volume: c.volume,
-      sma20: analysis?.indicators?.sma20 ?? null,
-      bbUpper: analysis?.indicators?.bbUpper ?? null,
-      bbLower: analysis?.indicators?.bbLower ?? null,
-      vwap: analysis?.indicators?.vwap ?? null,
+      sma20: analysisCurrent?.indicators?.sma20 ?? null,
+      bbUpper: analysisCurrent?.indicators?.bbUpper ?? null,
+      bbLower: analysisCurrent?.indicators?.bbLower ?? null,
+      vwap: analysisCurrent?.indicators?.vwap ?? null,
     }));
   }, [candles, analysis]);
 
@@ -1641,11 +1678,8 @@ export function PsxAlphaView() {
           <Card className="lg:col-span-2 border-border/60">
             <CardContent className="p-4 sm:p-5">
               <ProfessionalChart
-                candles={symbol === "KSE100" ? candles : analysisCandles}
                 symbol={symbol}
-                indicators={analysis?.indicators}
-                tradePlan={analysis?.composite}
-                loading={loadingCandles || loadingAnalysis}
+                tradePlan={analysisCurrent?.composite}
               />
             </CardContent>
           </Card>
@@ -1657,20 +1691,20 @@ export function PsxAlphaView() {
                 <Gauge className="h-4 w-4 text-violet-600 dark:text-violet-400" />
                 Technical Indicators
               </h4>
-              {analysis ? (
+              {analysisCurrent ? (
                 <div className="space-y-3">
                   {/* RSI gauge */}
                   <div>
                     <div className="flex items-center justify-between text-xs mb-1">
                       <span className="text-muted-foreground">RSI (14)</span>
                       <span className="font-medium tabular-nums">
-                        {analysis.indicators.rsi14.toFixed(1)}
+                        {analysisCurrent.indicators.rsi14.toFixed(1)}
                       </span>
                     </div>
                     <div className="h-2 rounded-full bg-gradient-to-r from-emerald-500 via-amber-500 to-rose-500 relative overflow-hidden">
                       <div
                         className="absolute top-1/2 -translate-y-1/2 h-3 w-3 rounded-full bg-background border-2 border-foreground"
-                        style={{ left: `calc(${Math.min(100, Math.max(0, analysis.indicators.rsi14))}% - 6px)` }}
+                        style={{ left: `calc(${Math.min(100, Math.max(0, analysisCurrent.indicators.rsi14))}% - 6px)` }}
                       />
                     </div>
                     <div className="flex justify-between text-[10px] text-muted-foreground mt-0.5">
@@ -1681,14 +1715,14 @@ export function PsxAlphaView() {
 
                   {/* MACD */}
                   <div className="grid grid-cols-2 gap-2 text-xs">
-                    <Ind label="MACD" value={analysis.indicators.macd.toFixed(2)} tone={analysis.indicators.macd >= analysis.indicators.macdSignal ? "bull" : "bear"} />
-                    <Ind label="Signal" value={analysis.indicators.macdSignal.toFixed(2)} tone="neutral" />
-                    <Ind label="Stoch %K" value={analysis.indicators.stochK.toFixed(1)} tone={analysis.indicators.stochK < 20 ? "bull" : analysis.indicators.stochK > 80 ? "bear" : "neutral"} />
-                    <Ind label="Stoch %D" value={analysis.indicators.stochD.toFixed(1)} tone="neutral" />
-                    <Ind label="SMA 20" value={analysis.indicators.sma20.toFixed(2)} tone={analysis.indicators.price > analysis.indicators.sma20 ? "bull" : "bear"} />
-                    <Ind label="ATR 14" value={analysis.indicators.atr14.toFixed(2)} tone="neutral" />
-                    <Ind label="BB Upper" value={analysis.indicators.bbUpper.toFixed(2)} tone="neutral" />
-                    <Ind label="BB Lower" value={analysis.indicators.bbLower.toFixed(2)} tone="neutral" />
+                    <Ind label="MACD" value={analysisCurrent.indicators.macd.toFixed(2)} tone={analysisCurrent.indicators.macd >= analysisCurrent.indicators.macdSignal ? "bull" : "bear"} />
+                    <Ind label="Signal" value={analysisCurrent.indicators.macdSignal.toFixed(2)} tone="neutral" />
+                    <Ind label="Stoch %K" value={analysisCurrent.indicators.stochK.toFixed(1)} tone={analysisCurrent.indicators.stochK < 20 ? "bull" : analysisCurrent.indicators.stochK > 80 ? "bear" : "neutral"} />
+                    <Ind label="Stoch %D" value={analysisCurrent.indicators.stochD.toFixed(1)} tone="neutral" />
+                    <Ind label="SMA 20" value={analysisCurrent.indicators.sma20.toFixed(2)} tone={analysisCurrent.indicators.price > analysisCurrent.indicators.sma20 ? "bull" : "bear"} />
+                    <Ind label="ATR 14" value={analysisCurrent.indicators.atr14.toFixed(2)} tone="neutral" />
+                    <Ind label="BB Upper" value={analysisCurrent.indicators.bbUpper.toFixed(2)} tone="neutral" />
+                    <Ind label="BB Lower" value={analysisCurrent.indicators.bbLower.toFixed(2)} tone="neutral" />
                   </div>
                 </div>
               ) : (
@@ -1742,7 +1776,7 @@ export function PsxAlphaView() {
                 </div>
               ) : strategies.strategies.length === 0 ? (
                 <div className="rounded-lg border border-amber-200/60 bg-amber-50/30 dark:bg-amber-950/10 p-3 text-[11px] text-amber-700 dark:text-amber-300 text-center">
-                  {strategies.message || "Not enough candle history for strategy analysis. Needs ≥35 days."}
+                  {strategies.message || "Not enough candle history for strategy analysisCurrent. Needs ≥35 days."}
                 </div>
               ) : (
                 <>
@@ -1851,9 +1885,9 @@ export function PsxAlphaView() {
                 <Brain className="h-4 w-4 text-violet-600 dark:text-violet-400" />
                 AI Analysis — {cleanSymbol(symbol)}
               </h4>
-              {analysis?.aiSummary ? (
+              {analysisCurrent?.aiSummary ? (
                 <p className="text-sm leading-relaxed text-foreground/90">
-                  {analysis.aiSummary}
+                  {analysisCurrent.aiSummary}
                 </p>
               ) : (
                 <p className="text-sm text-muted-foreground py-4 text-center">
@@ -1861,13 +1895,13 @@ export function PsxAlphaView() {
                 </p>
               )}
 
-              {analysis?.composite.reasons.length ? (
+              {analysisCurrent?.composite.reasons.length ? (
                 <div className="mt-4">
                   <p className="text-xs font-medium text-muted-foreground mb-2">
                     Signal reasons (composite of all indicators + patterns)
                   </p>
                   <ul className="space-y-1.5 text-sm">
-                    {analysis.composite.reasons.map((r, i) => (
+                    {analysisCurrent.composite.reasons.map((r, i) => (
                       <li key={i} className="flex items-start gap-2">
                         <Crosshair className="h-3.5 w-3.5 mt-0.5 text-violet-500 shrink-0" />
                         <span>{r}</span>
@@ -1890,31 +1924,31 @@ export function PsxAlphaView() {
                   <Minus className="h-5 w-5 mx-auto mb-1 opacity-50" />
                   KSE-100 is an index, not a tradable stock. Select a scrip from the Stocks table or search above to see its trade plan.
                 </div>
-              ) : analysis?.composite.action && analysis.composite.entry ? (
+              ) : analysisCurrent?.composite.action && analysisCurrent.composite.entry ? (
                 <div className="space-y-3">
                   {/* Big BUY/SELL/HOLD banner — show trade plan for ALL actions including HOLD (lean direction) */}
                   <div className={cn(
                     "rounded-lg p-3 text-center border-2",
-                    analysis.composite.action === "BUY"
+                    analysisCurrent.composite.action === "BUY"
                       ? "border-emerald-300 bg-emerald-50/70 dark:border-emerald-800 dark:bg-emerald-950/30"
-                      : analysis.composite.action === "SELL"
+                      : analysisCurrent.composite.action === "SELL"
                       ? "border-rose-300 bg-rose-50/70 dark:border-rose-800 dark:bg-rose-950/30"
                       : "border-amber-300 bg-amber-50/70 dark:border-amber-800 dark:bg-amber-950/30"
                   )}>
                     <p className={cn(
                       "text-3xl font-bold tracking-tight",
-                      analysis.composite.action === "BUY"
+                      analysisCurrent.composite.action === "BUY"
                         ? "text-emerald-600 dark:text-emerald-400"
-                        : analysis.composite.action === "SELL"
+                        : analysisCurrent.composite.action === "SELL"
                         ? "text-rose-600 dark:text-rose-400"
                         : "text-amber-600 dark:text-amber-400"
                     )}>
-                      {analysis.composite.action} {symbol}
+                      {analysisCurrent.composite.action} {symbol}
                     </p>
                     <p className="text-xs text-muted-foreground mt-1">
-                      Confidence: <span className="font-semibold">{analysis.composite.confidence.toFixed(0)}%</span>
-                      {" · "}R/R: <span className="font-semibold">1:{analysis.composite.riskReward?.toFixed(1) ?? "—"}</span>
-                      {analysis.composite.action === "HOLD" && (
+                      Confidence: <span className="font-semibold">{analysisCurrent.composite.confidence.toFixed(0)}%</span>
+                      {" · "}R/R: <span className="font-semibold">1:{analysisCurrent.composite.riskReward?.toFixed(1) ?? "—"}</span>
+                      {analysisCurrent.composite.action === "HOLD" && (
                         <span className="ml-1 text-amber-600 dark:text-amber-400">· setup shown as potential entry</span>
                       )}
                     </p>
@@ -1924,28 +1958,28 @@ export function PsxAlphaView() {
                     <div className="rounded-lg bg-emerald-100 dark:bg-emerald-950/40 p-2 text-center">
                       <p className="text-[10px] text-emerald-700 dark:text-emerald-300 font-medium">ENTRY</p>
                       <p className="text-lg sm:text-xl font-bold tabular-nums text-emerald-700 dark:text-emerald-300">
-                        {analysis.composite.entry?.toFixed(2) ?? "—"}
+                        {analysisCurrent.composite.entry?.toFixed(2) ?? "—"}
                       </p>
                     </div>
                     <div className="rounded-lg bg-rose-100 dark:bg-rose-950/40 p-2 text-center">
                       <p className="text-[10px] text-rose-700 dark:text-rose-300 font-medium">STOP LOSS</p>
                       <p className="text-lg sm:text-xl font-bold tabular-nums text-rose-700 dark:text-rose-300">
-                        {analysis.composite.stopLoss?.toFixed(2) ?? "—"}
+                        {analysisCurrent.composite.stopLoss?.toFixed(2) ?? "—"}
                       </p>
                     </div>
                     <div className="rounded-lg bg-violet-100 dark:bg-violet-950/40 p-2 text-center">
                       <p className="text-[10px] text-violet-700 dark:text-violet-300 font-medium">TARGET</p>
                       <p className="text-lg sm:text-xl font-bold tabular-nums text-violet-700 dark:text-violet-300">
-                        {analysis.composite.target?.toFixed(2) ?? "—"}
+                        {analysisCurrent.composite.target?.toFixed(2) ?? "—"}
                       </p>
                     </div>
                   </div>
                   <div className="text-[10px] text-muted-foreground text-center">
-                    Risk: Rs {(analysis.composite.entry && analysis.composite.stopLoss
-                      ? Math.abs(analysis.composite.entry - analysis.composite.stopLoss)
+                    Risk: Rs {(analysisCurrent.composite.entry && analysisCurrent.composite.stopLoss
+                      ? Math.abs(analysisCurrent.composite.entry - analysisCurrent.composite.stopLoss)
                       : 0).toFixed(2)} per share ·
-                    Reward: Rs {(analysis.composite.entry && analysis.composite.target
-                      ? Math.abs(analysis.composite.target - analysis.composite.entry)
+                    Reward: Rs {(analysisCurrent.composite.entry && analysisCurrent.composite.target
+                      ? Math.abs(analysisCurrent.composite.target - analysisCurrent.composite.entry)
                       : 0).toFixed(2)} per share
                   </div>
                 </div>
@@ -1962,14 +1996,46 @@ export function PsxAlphaView() {
                 </div>
               )}
 
-              {/* Patterns */}
+              {/* Chart Reader — patterns + structure + key levels */}
               <div className="mt-4 pt-3 border-t border-border/60">
-                <p className="text-xs font-medium text-muted-foreground mb-2">
-                  Candlestick Patterns
-                </p>
-                {analysis?.patterns && analysis.patterns.length > 0 ? (
-                  <ul className="space-y-1.5">
-                    {analysis.patterns.map((p, i) => (
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
+                    <Crosshair className="h-3 w-3 text-violet-500" />
+                    Chart Reader — patterns &amp; key levels
+                  </p>
+                  <span className="text-[9px] text-muted-foreground">last 60 sessions</span>
+                </div>
+
+                {/* Bull vs Bear pattern meter */}
+                {chartReader && (chartReader.bull > 0 || chartReader.bear > 0) && (
+                  <div className="mb-3">
+                    <div className="flex items-center justify-between text-[9px] mb-1">
+                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">
+                        ▲ {chartReader.bull} bullish
+                      </span>
+                      <span className="text-muted-foreground">pattern balance</span>
+                      <span className="text-rose-600 dark:text-rose-400 font-medium">
+                        {chartReader.bear} bearish ▼
+                      </span>
+                    </div>
+                    <div className="h-1.5 rounded-full overflow-hidden bg-rose-500/70 flex">
+                      <div
+                        className="h-full bg-emerald-500"
+                        style={{
+                          width: `${
+                            (chartReader.bull / Math.max(1, chartReader.bull + chartReader.bear)) * 100
+                          }%`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Latest candle patterns */}
+                <p className="text-[10px] text-muted-foreground/70 mb-1">On the latest candle</p>
+                {analysisCurrent?.patterns && analysisCurrent.patterns.length > 0 ? (
+                  <ul className="space-y-1.5 mb-3">
+                    {analysisCurrent.patterns.map((p, i) => (
                       <li
                         key={i}
                         className={cn(
@@ -2004,7 +2070,82 @@ export function PsxAlphaView() {
                     ))}
                   </ul>
                 ) : (
-                  <p className="text-xs text-muted-foreground">No significant patterns detected</p>
+                  <p className="text-xs text-muted-foreground mb-3">No significant patterns on the latest candle</p>
+                )}
+
+                {/* Recent pattern events (dated, newest first) */}
+                {chartReader && chartReader.events.length > 0 && (
+                  <div className="mb-3">
+                    <p className="text-[10px] text-muted-foreground/70 mb-1">Recent pattern events</p>
+                    <ul className="space-y-1">
+                      {chartReader.events.slice(0, 5).map((e, i) => (
+                        <li
+                          key={i}
+                          className="flex items-center justify-between text-[11px] rounded px-1.5 py-1 bg-muted/30"
+                        >
+                          <span className="flex items-center gap-1.5 min-w-0">
+                            <span
+                              className={cn(
+                                "shrink-0",
+                                e.type === "bullish"
+                                  ? "text-emerald-600 dark:text-emerald-400"
+                                  : e.type === "bearish"
+                                  ? "text-rose-600 dark:text-rose-400"
+                                  : "text-amber-600 dark:text-amber-400"
+                              )}
+                            >
+                              {e.type === "bullish" ? "▲" : e.type === "bearish" ? "▼" : "◆"}
+                            </span>
+                            <span className="font-medium truncate">{e.name}</span>
+                          </span>
+                          <span className="text-[9px] text-muted-foreground tabular-nums shrink-0 ml-2">
+                            {e.date}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+
+                {/* Support / Resistance + market structure */}
+                {chartReader?.sr && (chartReader.sr.supports.length > 0 || chartReader.sr.resistances.length > 0) && (
+                  <div>
+                    <p className="text-[10px] text-muted-foreground/70 mb-1">Key levels</p>
+                    <div className="space-y-1">
+                      {chartReader.sr.resistances.map((r, i) => (
+                        <div key={`r${i}`} className="flex items-center justify-between text-[11px] rounded px-1.5 py-1 bg-rose-500/5 border border-rose-500/15">
+                          <span className="text-rose-600 dark:text-rose-400 font-medium">R{i + 1} · resistance</span>
+                          <span className="tabular-nums font-semibold">
+                            {r.price.toFixed(2)}
+                            <span className="text-[9px] text-muted-foreground font-normal ml-1.5">
+                              +{r.distPct.toFixed(1)}%{r.touches > 1 ? ` · ${r.touches}×` : ""}
+                            </span>
+                          </span>
+                        </div>
+                      ))}
+                      {chartReader.sr.supports.map((s, i) => (
+                        <div key={`s${i}`} className="flex items-center justify-between text-[11px] rounded px-1.5 py-1 bg-emerald-500/5 border border-emerald-500/15">
+                          <span className="text-emerald-600 dark:text-emerald-400 font-medium">S{i + 1} · support</span>
+                          <span className="tabular-nums font-semibold">
+                            {s.price.toFixed(2)}
+                            <span className="text-[9px] text-muted-foreground font-normal ml-1.5">
+                              {s.distPct.toFixed(1)}%{s.touches > 1 ? ` · ${s.touches}×` : ""}
+                            </span>
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-1">
+                      {chartReader.sr.structure === "uptrend" ? (
+                        <TrendingUp className="h-3 w-3 text-emerald-500" />
+                      ) : chartReader.sr.structure === "downtrend" ? (
+                        <TrendingDown className="h-3 w-3 text-rose-500" />
+                      ) : (
+                        <Minus className="h-3 w-3 text-muted-foreground" />
+                      )}
+                      Structure: {chartReader.sr.structureLabel}
+                    </p>
+                  </div>
                 )}
               </div>
             </CardContent>

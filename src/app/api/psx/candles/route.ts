@@ -199,100 +199,215 @@ async function fetchKse100Candles(): Promise<Candle[]> {
   throw new RateLimitError("z-ai rate-limited, no fresh candles available");
 }
 
-// GET /api/psx/candles?symbol=OGDC&range=3mo
+// GET /api/psx/candles?symbol=OGDC&range=3mo&interval=1d
 //
 // Returns real historical candles for a PSX scrip or KSE100 index.
 // - symbol=KSE100 → KSE-100 index history from investing.com (via z-ai page_reader)
-// - symbol=<scrip> → real per-scrip history from Yahoo Finance (.KA suffix)
+// - symbol=<scrip> → real per-scrip history from Twelve Data / Yahoo Finance (.KA suffix)
 // - Falls back to DB-saved candles if external sources unavailable
+//
+// Ranges: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y
+// Intervals: 1d (default), 1wk, 5m/15m/30m/1h (intraday — auto-degrades to
+// daily when the scrip has no intraday history, which is the norm for PSX on
+// free real data sources).
 export async function GET(req: NextRequest) {
   try {
     const url = new URL(req.url);
     const symbol = url.searchParams.get("symbol") ?? "KSE100";
     const range = url.searchParams.get("range") ?? "3mo";
+    const requestedInterval = url.searchParams.get("interval") ?? "1d";
 
     let candles: Candle[] = [];
     let source = "unknown";
+    let servedInterval = requestedInterval;
 
+    // ---------- KSE100 index (daily history from investing.com / DB) ----------
     if (symbol === "KSE100") {
       candles = await fetchKse100Candles();
       source = "investing.com (KSE100)";
-    } else {
-      // Priority 1: Twelve Data (if API key is set) — real-time per-scrip history
-      if (hasTwelveDataKey()) {
-        try {
-          // Determine outputsize from range
-          const outputsizeMap: Record<string, number> = {
-            "1mo": 30,
-            "3mo": 90,
-            "6mo": 180,
-            "1y": 365,
-            "2y": 730,
-            "5y": 1825,
-          };
-          const outputsize = outputsizeMap[range] ?? 90;
-          const tdCandles = await fetchTdHistory(symbol, "1day", outputsize);
-          if (tdCandles.length > 0) {
-            candles = tdCandles;
-            source = `Twelve Data (${stripFuturesSuffix(symbol).toUpperCase()}) — ${tdCandles.length} real candles`;
-          }
-        } catch (e) {
-          console.warn(`[psx/candles] Twelve Data failed for ${symbol}:`, e);
-        }
-      }
 
-      // Priority 2: Yahoo Finance — real per-scrip history (no API key needed)
-      if (candles.length === 0) {
-        try {
-          candles = await fetchYahooCandles(symbol, range);
-          if (candles.length > 0) {
-            source = `Yahoo Finance (${stripFuturesSuffix(symbol).toUpperCase()}.KA) — ${candles.length} real candles`;
-          }
-        } catch (e) {
-          console.warn(`[psx/candles] Yahoo fetch failed for ${symbol}:`, e);
-        }
-      }
+      // Slice daily candles to approximate the requested range
+      const sliceMap: Record<string, number> = {
+        "1d": 2, "5d": 5, "1mo": 22, "3mo": 66, "6mo": 132, "1y": 250, "2y": 500, "5y": 2500,
+      };
+      const take = sliceMap[range] ?? candles.length;
+      if (candles.length > take) candles = candles.slice(-take);
 
-      // Priority 3: DB-saved candles
-      if (candles.length === 0) {
-        const clean = stripFuturesSuffix(symbol).toUpperCase();
-        candles = await loadCandlesFromDB(clean);
-        if (candles.length > 0) {
-          source = `DB-saved candles (${clean}) — ${candles.length} candles`;
-        }
+      // Aggregate into weekly candles when requested
+      if (requestedInterval === "1wk") {
+        candles = aggregateWeekly(candles);
+        servedInterval = "1wk";
+        source += " → weekly aggregate";
+      } else {
+        servedInterval = "1d";
       }
+      return respond(symbol, candles, servedInterval, requestedInterval, source);
+    }
 
-      // Priority 4: today's real OHLC from PSX (single candle)
-      if (candles.length === 0) {
-        try {
-          const direct = await fetchPsxDirect();
-          const scrip = direct.scrips.find(
-            (s) => stripFuturesSuffix(s.symbol).toUpperCase() === stripFuturesSuffix(symbol).toUpperCase()
-          );
-          if (scrip) {
-            const today = new Date().toISOString().slice(0, 10);
-            candles = [{
-              date: today,
-              open: scrip.open || scrip.ldcp,
-              high: scrip.high,
-              low: scrip.low,
-              close: scrip.current,
-              volume: scrip.volume,
-              changePct: scrip.changePct,
-            }];
-            source = `today's real OHLC from PSX (single candle)`;
-          }
-        } catch (e) {
-          console.warn(`[psx/candles] PSX direct fallback failed:`, e);
+    // ---------- PSX scrip ----------
+    const isIntraday = !["1d", "1wk", "1mo"].includes(requestedInterval);
+
+    // Priority 1: Twelve Data (if API key is set) — real per-scrip history
+    if (hasTwelveDataKey()) {
+      try {
+        const tdInterval =
+          requestedInterval === "1wk" ? "1week"
+          : requestedInterval === "1mo" ? "1month"
+          : isIntraday
+          ? requestedInterval.replace("m", "min").replace("1h", "1h")
+          : "1day";
+        const outputsizeMap: Record<string, number> = {
+          "1d": 2, "5d": 7, "1mo": 24, "3mo": 70, "6mo": 135, "1y": 270, "2y": 540, "5y": 550,
+        };
+        const outputsize = isIntraday
+          ? Math.min(5000, (sliceDaysToBars(range) ?? 66) * (requestedInterval === "1h" ? 7 : requestedInterval === "30m" ? 14 : 40))
+          : outputsizeMap[range] ?? 90;
+        const tdCandles = await fetchTdHistory(symbol, tdInterval, Math.max(30, Math.min(outputsize, 4000)));
+        if (tdCandles.length > 0) {
+          candles = tdCandles;
+          servedInterval = requestedInterval;
+          source = `Twelve Data (${stripFuturesSuffix(symbol).toUpperCase()} ${tdInterval}) — ${tdCandles.length} real candles`;
         }
+      } catch (e) {
+        console.warn(`[psx/candles] Twelve Data failed for ${symbol}:`, e);
       }
     }
 
-    return NextResponse.json({
+    // Priority 2: Yahoo Finance — real per-scrip history (no API key needed)
+    if (candles.length === 0) {
+      try {
+        const yCandles = await fetchYahooCandles(symbol, range, requestedInterval);
+        // Intraday auto-degrade: PSX scrips usually have no real intraday
+        // history on Yahoo — it returns 1 pseudo-bar per day (stamped 09:30).
+        // Detect that (≤2 bars per expected session) and fall back to daily.
+        const rangeDays: Record<string, number> = {
+          "1d": 1, "5d": 5, "1mo": 22, "3mo": 66, "6mo": 132, "1y": 250, "2y": 500, "5y": 1250,
+        };
+        const expectedDays = rangeDays[range] ?? 5;
+        const fakeIntraday = isIntraday && yCandles.length <= 2 * expectedDays;
+        if (isIntraday && (yCandles.length <= 2 || fakeIntraday)) {
+          const daily = await fetchYahooCandles(symbol, range === "1d" ? "5d" : range, "1d");
+          if (daily.length >= yCandles.length) {
+            candles = daily.slice(-(range === "1d" ? 2 : Math.max(daily.length, 5)));
+            servedInterval = "1d";
+            source = `Yahoo Finance (${stripFuturesSuffix(symbol).toUpperCase()}.KA daily) — intraday history unavailable, showing daily`;
+          } else {
+            candles = yCandles;
+            servedInterval = requestedInterval;
+            source = `Yahoo Finance (${stripFuturesSuffix(symbol).toUpperCase()}.KA) — ${yCandles.length} intraday candles`;
+          }
+        } else if (yCandles.length > 0) {
+          candles = yCandles;
+          servedInterval = requestedInterval;
+          source = `Yahoo Finance (${stripFuturesSuffix(symbol).toUpperCase()}.KA ${requestedInterval}) — ${yCandles.length} real candles`;
+        }
+      } catch (e) {
+        console.warn(`[psx/candles] Yahoo fetch failed for ${symbol}:`, e);
+      }
+    }
+
+    // Priority 3: DB-saved candles (daily only — intraday is never persisted)
+    if (candles.length === 0 && !isIntraday) {
+      const clean = stripFuturesSuffix(symbol).toUpperCase();
+      candles = await loadCandlesFromDB(clean);
+      if (candles.length > 0) {
+        servedInterval = requestedInterval === "1wk" ? "1wk" : "1d";
+        if (servedInterval === "1wk") candles = aggregateWeekly(candles);
+        source = `DB-saved candles (${clean}) — ${candles.length} candles`;
+      }
+    }
+
+    // Priority 4: today's real OHLC from PSX (single candle, daily view only)
+    if (candles.length === 0 && !isIntraday) {
+      try {
+        const direct = await fetchPsxDirect();
+        const scrip = direct.scrips.find(
+          (s) => stripFuturesSuffix(s.symbol).toUpperCase() === stripFuturesSuffix(symbol).toUpperCase()
+        );
+        if (scrip) {
+          const today = new Date().toISOString().slice(0, 10);
+          candles = [{
+            date: today,
+            open: scrip.open || scrip.ldcp,
+            high: scrip.high,
+            low: scrip.low,
+            close: scrip.current,
+            volume: scrip.volume,
+            changePct: scrip.changePct,
+          }];
+          servedInterval = "1d";
+          source = `today's real OHLC from PSX (single candle)`;
+        }
+      } catch (e) {
+        console.warn(`[psx/candles] PSX direct fallback failed:`, e);
+      }
+    }
+
+    return respond(symbol, candles, servedInterval, requestedInterval, source);
+  } catch (err) {
+    console.error("[GET /api/psx/candles] error:", err);
+    const isRL = err instanceof RateLimitError;
+    return NextResponse.json(
+      {
+        ok: false,
+        error: err instanceof Error ? err.message : "Failed to fetch candles",
+        rateLimited: isRL,
+        rateLimitedUntil: isRL ? new Date(getRateLimitedUntil()).toISOString() : null,
+      },
+      { status: isRL ? 429 : 500 }
+    );
+  }
+}
+
+// Approximate how many TRADING DAYS the range spans (for intraday sizing)
+function sliceDaysToBars(range: string): number | null {
+  const map: Record<string, number> = { "1d": 1, "5d": 5, "1mo": 22, "3mo": 66, "6mo": 132, "1y": 250, "2y": 500, "5y": 1250 };
+  return map[range] ?? null;
+}
+
+// Aggregate daily candles into ISO-week buckets (Mon–Fri PKT).
+function aggregateWeekly(daily: Candle[]): Candle[] {
+  const out: Candle[] = [];
+  let cur: Candle | null = null;
+  let curWeek = "";
+  for (const c of daily) {
+    const d = new Date(`${(c.date || "").slice(0, 10)}T00:00:00Z`);
+    if (isNaN(d.getTime())) continue;
+    // ISO week key: year-weeknumber
+    const jan1 = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
+    const week = Math.ceil(((d.getTime() - jan1.getTime()) / 86400000 + jan1.getUTCDay() + 1) / 7);
+    const key = `${d.getUTCFullYear()}-W${String(week).padStart(2, "0")}`;
+    if (key !== curWeek) {
+      if (cur) out.push(cur);
+      cur = { date: c.date, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume, changePct: c.changePct };
+      curWeek = key;
+    } else if (cur) {
+      cur.high = Math.max(cur.high, c.high);
+      cur.low = Math.min(cur.low, c.low);
+      cur.close = c.close;
+      cur.volume += c.volume;
+      if (cur.open === 0) cur.open = c.open;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+
+// Shared JSON response builder (keeps backward-compatible shape)
+function respond(
+  symbol: string,
+  candles: Candle[],
+  servedInterval: string,
+  requestedInterval: string,
+  source: string
+) {
+  return NextResponse.json(
+    {
       ok: true,
       data: {
         symbol: symbol === "KSE100" ? "KSE100" : stripFuturesSuffix(symbol).toUpperCase(),
-        interval: "1d",
+        interval: servedInterval,
+        requestedInterval,
         candles,
         candlesCount: candles.length,
         lowDataMode: candles.length < 14,
@@ -310,18 +425,7 @@ export async function GET(req: NextRequest) {
             : null,
         },
       },
-    });
-  } catch (err) {
-    console.error("[GET /api/psx/candles] error:", err);
-    const isRL = err instanceof RateLimitError;
-    return NextResponse.json(
-      {
-        ok: false,
-        error: err instanceof Error ? err.message : "Failed to fetch candles",
-        rateLimited: isRL,
-        rateLimitedUntil: isRL ? new Date(getRateLimitedUntil()).toISOString() : null,
-      },
-      { status: isRL ? 429 : 500 }
-    );
-  }
+    },
+    { headers: { "Cache-Control": "no-store" } }
+  );
 }

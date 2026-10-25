@@ -299,3 +299,99 @@ export function computeSnapshot(candles: Candle[]): IndicatorSnapshot | null {
     closePrev: getPrev(closes),
   };
 }
+
+// ---------- Support / Resistance levels (Chart Reader) ----------
+export interface SrLevel {
+  price: number;
+  /** How many pivot points clustered into this level */
+  touches: number;
+  kind: "support" | "resistance";
+  /** Distance from current price in % */
+  distPct: number;
+}
+
+export interface SrResult {
+  supports: SrLevel[];
+  resistances: SrLevel[];
+  /** Market structure from the last 4 pivots: HH/HL (uptrend), LH/LL (downtrend) */
+  structure: "uptrend" | "downtrend" | "sideways";
+  structureLabel: string;
+}
+
+// Detect pivot highs/lows (fractal, 2 bars each side) over `lookback` candles,
+// cluster nearby pivots (within 0.6%) into levels, then split by current price.
+export function computeSrLevels(candles: Candle[], lookback = 120): SrResult | null {
+  if (candles.length < 12) return null;
+  const start = Math.max(2, candles.length - lookback);
+  const end = candles.length;
+  const price = candles[end - 1].close;
+
+  const pivotHighs: { price: number; idx: number }[] = [];
+  const pivotLows: { price: number; idx: number }[] = [];
+  for (let i = start; i < end - 2; i++) {
+    const h = candles[i].high;
+    const l = candles[i].low;
+    if (
+      h >= candles[i - 1].high && h >= candles[i - 2].high &&
+      h >= candles[i + 1].high && h >= candles[i + 2].high
+    ) pivotHighs.push({ price: h, idx: i });
+    if (
+      l <= candles[i - 1].low && l <= candles[i - 2].low &&
+      l <= candles[i + 1].low && l <= candles[i + 2].low
+    ) pivotLows.push({ price: l, idx: i });
+  }
+
+  // Cluster pivots within 0.6% of the cluster mean
+  function cluster(points: { price: number; idx: number }[]): { price: number; touches: number }[] {
+    const sorted = [...points].sort((a, b) => a.price - b.price);
+    const clusters: { price: number; touches: number }[] = [];
+    for (const p of sorted) {
+      const lastC = clusters[clusters.length - 1];
+      if (lastC && Math.abs(p.price - lastC.price) / lastC.price < 0.006) {
+        // merge into cluster (running mean)
+        lastC.price = (lastC.price * lastC.touches + p.price) / (lastC.touches + 1);
+        lastC.touches += 1;
+      } else {
+        clusters.push({ price: p.price, touches: 1 });
+      }
+    }
+    return clusters;
+  }
+
+  const toLevel = (c: { price: number; touches: number }, kind: "support" | "resistance"): SrLevel => ({
+    price: c.price,
+    touches: c.touches,
+    kind,
+    distPct: ((c.price - price) / price) * 100,
+  });
+
+  const supports = cluster(pivotLows)
+    .filter((c) => c.price < price)
+    .sort((a, b) => b.price - a.price) // nearest support first
+    .slice(0, 3)
+    .map((c) => toLevel(c, "support"));
+
+  const resistances = cluster(pivotHighs)
+    .filter((c) => c.price > price)
+    .sort((a, b) => a.price - b.price) // nearest resistance first
+    .slice(0, 3)
+    .map((c) => toLevel(c, "resistance"));
+
+  // Market structure: compare last two pivot highs & lows
+  let structure: SrResult["structure"] = "sideways";
+  let structureLabel = "Sideways / ranging";
+  const lastHighs = pivotHighs.slice(-2);
+  const lastLows = pivotLows.slice(-2);
+  if (lastHighs.length === 2 && lastLows.length === 2) {
+    const hh = lastHighs[1].price > lastHighs[0].price;
+    const hl = lastLows[1].price > lastLows[0].price;
+    const lh = lastHighs[1].price < lastHighs[0].price;
+    const ll = lastLows[1].price < lastLows[0].price;
+    if (hh && hl) { structure = "uptrend"; structureLabel = "Uptrend — higher highs & higher lows"; }
+    else if (lh && ll) { structure = "downtrend"; structureLabel = "Downtrend — lower highs & lower lows"; }
+    else if (hh && ll) { structureLabel = "Expanding range (volatility widening)"; }
+    else if (hl && lh) { structureLabel = "Contracting range (compression)"; }
+  }
+
+  return { supports, resistances, structure, structureLabel };
+}

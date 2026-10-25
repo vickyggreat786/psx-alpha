@@ -79,12 +79,57 @@ function psxSymbolToYahoo(symbol: string): string {
   return `${clean}.KA`;
 }
 
+// Intervals that are longer than one trading day.
+// Everything else (1m/5m/15m/30m/1h) is INTRADAY and needs time-of-day in the
+// date key so the chart can render multiple candles per day.
+const DAILY_PLUS_INTERVALS = new Set(["1d", "1wk", "1mo"]);
+
+// Format a Yahoo unix timestamp for display/storage.
+// Daily+ intervals → "YYYY-MM-DD" (PKT). Intraday → "YYYY-MM-DD HH:mm" (PKT).
+function formatCandleDate(tsSec: number, interval: string): string {
+  try {
+    const dtf = new Intl.DateTimeFormat("en-CA", {
+      timeZone: "Asia/Karachi",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      ...(DAILY_PLUS_INTERVALS.has(interval)
+        ? {}
+        : { hour: "2-digit", minute: "2-digit", hour12: false }),
+    });
+    const parts = Object.fromEntries(
+      dtf.formatToParts(new Date(tsSec * 1000)).map((p) => [p.type, p.value])
+    );
+    const ymd = `${parts.year}-${parts.month}-${parts.day}`;
+    if (DAILY_PLUS_INTERVALS.has(interval)) return ymd;
+    // Intl may return "24" for midnight with hour12:false — normalize to "00"
+    const hh = parts.hour === "24" ? "00" : parts.hour;
+    return `${ymd} ${hh}:${parts.minute}`;
+  } catch {
+    return new Date(tsSec * 1000).toISOString().slice(0, 10);
+  }
+}
+
+// PSX trades Mon–Fri (PKT). Yahoo sometimes emits phantom weekend bars
+// (duplicates of Friday's candle stamped Sat/Sun) — filter them out.
+function isPkWeekend(tsSec: number): boolean {
+  try {
+    const wd = new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Karachi",
+      weekday: "short",
+    }).format(new Date(tsSec * 1000));
+    return wd === "Sat" || wd === "Sun";
+  } catch {
+    return false;
+  }
+}
+
 // Fetch historical candles for a PSX scrip from Yahoo Finance.
-// Returns real OHLCV daily candles, oldest → newest.
+// Returns real OHLCV candles, oldest → newest.
 //
 // @param symbol PSX scrip symbol (e.g. "OGDC", "OGDC-AUG", "P.S.O.")
-// @param range Time range — valid values: "1mo", "3mo", "6mo", "1y", "2y", "5y"
-// @param interval Candle interval — "1d" for daily, "1wk" for weekly
+// @param range Time range — valid values: "1d", "5d", "1mo", "3mo", "6mo", "1y", "2y", "5y"
+// @param interval Candle interval — "1d" daily, "1wk" weekly, "5m"/"15m"/"30m"/"1h" intraday
 export async function fetchYahooCandles(
   symbol: string,
   range: string = "3mo",
@@ -130,9 +175,10 @@ export async function fetchYahooCandles(
     const candles: Candle[] = [];
     for (let i = 0; i < ts.length; i++) {
       if (o[i] == null || c[i] == null) continue; // skip null entries (non-trading days)
-      const date = new Date(ts[i] * 1000).toISOString().slice(0, 10);
+      // Drop phantom weekend bars (weekly bars are stamped at week start — keep)
+      if (interval !== "1wk" && isPkWeekend(ts[i])) continue;
       candles.push({
-        date,
+        date: formatCandleDate(ts[i], interval),
         open: o[i],
         high: h[i] ?? o[i],
         low: l[i] ?? o[i],
@@ -143,10 +189,13 @@ export async function fetchYahooCandles(
 
     if (candles.length > 0) {
       cache.set(cacheKey, { candles, at: Date.now() });
-      // Save to DB in the background (don't block response)
-      saveCandlesToDb(stripFuturesSuffix(symbol).toUpperCase(), candles).catch(
-        (e) => console.warn(`[yahoo-finance] DB save failed for ${symbol}:`, e)
-      );
+      // Persist only DAILY candles to the DB (builds our own history over time).
+      // Intraday candles would bloat the DB and are always re-fetchable.
+      if (DAILY_PLUS_INTERVALS.has(interval)) {
+        saveCandlesToDb(stripFuturesSuffix(symbol).toUpperCase(), candles).catch(
+          (e) => console.warn(`[yahoo-finance] DB save failed for ${symbol}:`, e)
+        );
+      }
     }
     return candles;
   } catch (e) {
@@ -191,13 +240,14 @@ async function saveCandlesToDb(symbol: string, candles: Candle[]): Promise<void>
   }
 }
 
-// Load candles from DB (fallback when Yahoo unavailable)
+// Load candles from DB (fallback when Yahoo unavailable).
+// 400 rows ≈ 1.5 years of trading days — enough for the 1Y chart view.
 async function loadCandlesFromDb(symbol: string): Promise<Candle[]> {
   try {
     const rows = await db.candleHistory.findMany({
       where: { symbol },
       orderBy: { date: "asc" },
-      take: 90,
+      take: 400,
     });
     return rows.map((r) => ({
       date: r.date,
