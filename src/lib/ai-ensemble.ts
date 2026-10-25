@@ -16,6 +16,30 @@ import type { PatternMatch } from "./patterns";
 import type { IndicatorSnapshot } from "./indicators";
 import { callZai, RateLimitError, isRateLimited } from "./zai-ratelimit";
 
+// ---------- Proxy helper ----------
+// Returns the base URL of an AI proxy (Cloudflare Worker in prod, local Node
+// proxy in dev) that all provider calls should be routed through.
+// Falls back to empty string ("direct mode") when no proxy is configured.
+// The proxy bypasses regional IP blocks and rotates API keys on 429.
+export function getProxyBase(): string {
+  // Prefer explicit env override, then the worker URL, then a local proxy.
+  return (
+    process.env.AI_PROXY_URL ||
+    process.env.CLOUDFLARE_WORKER_URL ||
+    (process.env.AI_PROXY_LOCAL === "1" ? "http://127.0.0.1:8787" : "")
+  );
+}
+
+// Returns `${proxy}/<provider>` when a proxy is configured, else the direct upstream URL.
+function providerUrl(provider: string, direct: string): string {
+  const proxy = getProxyBase();
+  if (proxy) return `${proxy.replace(/\/$/, "")}/${provider}`;
+  return direct.replace(/\/$/, "");
+}
+
+// Sleep helper used by retry logic.
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
 export interface ProviderConfig {
   id: string;
   label: string;
@@ -143,7 +167,7 @@ export async function callOpenRouter(prompt: string): Promise<string> {
   let lastErr = "";
   for (const model of freeModels) {
     try {
-      const res = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+      const res = await fetch(`${providerUrl("openrouter", "https://openrouter.ai")}/api/v1/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -183,6 +207,12 @@ export async function callOpenRouter(prompt: string): Promise<string> {
           }
           throw new Error("OpenRouter free-tier daily limit reached");
         }
+        if (res.status === 429) {
+          // Short per-minute rate limit — wait briefly and retry next model.
+          await sleep(800);
+          lastErr = `OpenRouter ${model} rate-limited (429)`;
+          continue;
+        }
         lastErr = `OpenRouter ${model} error: ${errText.slice(0, 200)}`;
         continue;
       }
@@ -217,10 +247,7 @@ export async function callGroq(prompt: string): Promise<string> {
     throw new Error("Groq disabled (key invalid)");
   }
   // If Cloudflare Worker proxy is configured, route through it to bypass HK region block
-  const workerUrl = process.env.CLOUDFLARE_WORKER_URL;
-  const groqBaseUrl = workerUrl
-    ? `${workerUrl}/groq/openai`
-    : "https://api.groq.com/openai";
+  const groqBaseUrl = providerUrl("groq", "https://api.groq.com/openai");
   // Try multiple models in case one is deprecated/unavailable
   const models = [
     "llama-3.3-70b-versatile",
@@ -381,10 +408,7 @@ export async function callGemini(prompt: string): Promise<string> {
   for (const model of models) {
     try {
       // If Cloudflare Worker proxy is configured, route through it to bypass HK region block
-      const workerUrl = process.env.CLOUDFLARE_WORKER_URL;
-      const geminiBase = workerUrl
-        ? `${workerUrl}/gemini/v1beta`
-        : "https://generativelanguage.googleapis.com/v1beta";
+      const geminiBase = providerUrl("gemini", "https://generativelanguage.googleapis.com/v1beta");
       const url = `${geminiBase}/models/${model}:generateContent?key=${apiKey}`;
       const res = await fetch(url, {
         method: "POST",
@@ -446,10 +470,11 @@ export async function callTogether(prompt: string): Promise<string> {
     "meta-llama/Meta-Llama-3.1-8B-Instruct-Turbo",
     "mistralai/Mistral-7B-Instruct-v0.3",
   ];
+  const togetherBase = providerUrl("together", "https://api.together.xyz");
   let lastErr = "";
   for (const model of models) {
     try {
-      const res = await fetch("https://api.together.xyz/v1/chat/completions", {
+      const res = await fetch(`${togetherBase}/v1/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -467,6 +492,11 @@ export async function callTogether(prompt: string): Promise<string> {
       });
       if (!res.ok) {
         const errText = await res.text();
+        if (res.status === 429) {
+          await sleep(800);
+          lastErr = `Together ${model} rate-limited (429)`;
+          continue;
+        }
         lastErr = `Together ${model} error: ${errText.slice(0, 200)}`;
         continue;
       }
@@ -490,10 +520,11 @@ export async function callMistral(prompt: string): Promise<string> {
   if (!apiKey) throw new Error("MISTRAL_API_KEY not set");
   if (mistralDisabled) throw new Error("Mistral disabled (key invalid)");
   const models = ["mistral-small-latest", "mistral-tiny", "open-mistral-7b", "open-mixtral-8x7b"];
+  const mistralBase = providerUrl("mistral", "https://api.mistral.ai");
   let lastErr = "";
   for (const model of models) {
     try {
-      const res = await fetch("https://api.mistral.ai/v1/chat/completions", {
+      const res = await fetch(`${mistralBase}/v1/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -514,6 +545,11 @@ export async function callMistral(prompt: string): Promise<string> {
         if (res.status === 401 || errText.includes("Authorization header")) {
           mistralDisabled = true;
           throw new Error("Mistral API key invalid");
+        }
+        if (res.status === 429) {
+          await sleep(800);
+          lastErr = `Mistral ${model} rate-limited (429)`;
+          continue;
         }
         lastErr = `Mistral ${model} error: ${errText.slice(0, 200)}`;
         continue;
@@ -546,10 +582,11 @@ export async function callDeepInfra(prompt: string): Promise<string> {
     "mistralai/Mistral-7B-Instruct-v0.3",
     "Qwen/Qwen2.5-7B-Instruct",
   ];
+  const deepInfraBase = providerUrl("deepinfra", "https://api.deepinfra.com");
   let lastErr = "";
   for (const model of models) {
     try {
-      const res = await fetch("https://api.deepinfra.com/v1/openai/chat/completions", {
+      const res = await fetch(`${deepInfraBase}/v1/openai/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -570,6 +607,11 @@ export async function callDeepInfra(prompt: string): Promise<string> {
         if (res.status === 401) {
           deepInfraDisabled = true;
           throw new Error("DeepInfra API key invalid");
+        }
+        if (res.status === 429) {
+          await sleep(800);
+          lastErr = `DeepInfra ${model} rate-limited (429)`;
+          continue;
         }
         lastErr = `DeepInfra ${model} error: ${errText.slice(0, 200)}`;
         continue;
@@ -611,11 +653,12 @@ export async function callCohere(prompt: string): Promise<string> {
     "command-r7b-12-2024",     // Smaller/faster fallback
     "c4ai-aya-expanse-32b",    // Aya (multilingual) fallback
   ];
+  const cohereBase = providerUrl("cohere", "https://api.cohere.ai");
   let lastErr = "";
   let hit429 = false;
   for (const model of models) {
     try {
-      const res = await fetch("https://api.cohere.ai/v2/chat", {
+      const res = await fetch(`${cohereBase}/v2/chat`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -680,7 +723,8 @@ export async function callCohere(prompt: string): Promise<string> {
 async function callClaude(prompt: string): Promise<string> {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) throw new Error("ANTHROPIC_API_KEY not set");
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const claudeBase = providerUrl("anthropic", "https://api.anthropic.com");
+  const res = await fetch(`${claudeBase}/v1/messages`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -704,7 +748,8 @@ async function callClaude(prompt: string): Promise<string> {
 async function callOpenAI(prompt: string): Promise<string> {
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) throw new Error("OPENAI_API_KEY not set");
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  const openaiBase = providerUrl("openai", "https://api.openai.com");
+  const res = await fetch(`${openaiBase}/v1/chat/completions`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -730,6 +775,7 @@ async function callOpenAI(prompt: string): Promise<string> {
 async function callDeepSeek(prompt: string): Promise<string> {
   const apiKey = process.env.DEEPSEEK_API_KEY;
   if (!apiKey) throw new Error("DEEPSEEK_API_KEY not set");
+  // DeepSeek does not have a proxy route in the worker — keep it direct.
   const res = await fetch("https://api.deepseek.com/chat/completions", {
     method: "POST",
     headers: {
