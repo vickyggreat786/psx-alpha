@@ -226,20 +226,32 @@ export async function GET(req: NextRequest) {
       candles = await fetchKse100Candles();
       source = "investing.com (KSE100)";
 
-      // Slice daily candles to approximate the requested range
+      // Intraday is never available for the index — degrade to daily immediately
+      const indexDaily = !"1wk 1mo".split(" ").includes(requestedInterval);
+
+      // Slice daily candles to approximate the requested range.
+      // Intraday windows (1d/5d) get a floor of real daily bars so the chart
+      // never renders a nearly-empty canvas.
       const sliceMap: Record<string, number> = {
-        "1d": 2, "5d": 5, "1mo": 22, "3mo": 66, "6mo": 132, "1y": 250, "2y": 500, "5y": 2500,
+        "1d": 10, "5d": 30, "1mo": 22, "3mo": 66, "6mo": 132, "1y": 250, "2y": 500, "5y": 2500, "max": Infinity,
       };
       const take = sliceMap[range] ?? candles.length;
-      if (candles.length > take) candles = candles.slice(-take);
+      if (Number.isFinite(take) && candles.length > take) candles = candles.slice(-take);
 
-      // Aggregate into weekly candles when requested
+      // Aggregate into weekly / monthly candles when requested
       if (requestedInterval === "1wk") {
         candles = aggregateWeekly(candles);
         servedInterval = "1wk";
         source += " → weekly aggregate";
+      } else if (requestedInterval === "1mo") {
+        candles = aggregateMonthly(candles);
+        servedInterval = "1mo";
+        source += " → monthly aggregate";
       } else {
         servedInterval = "1d";
+      }
+      if (range === "1d" || range === "5d") {
+        source += " · intraday unavailable for PSX — daily candles";
       }
       return respond(symbol, candles, servedInterval, requestedInterval, source);
     }
@@ -257,7 +269,7 @@ export async function GET(req: NextRequest) {
           ? requestedInterval.replace("m", "min").replace("1h", "1h")
           : "1day";
         const outputsizeMap: Record<string, number> = {
-          "1d": 2, "5d": 7, "1mo": 24, "3mo": 70, "6mo": 135, "1y": 270, "2y": 540, "5y": 550,
+          "1d": 10, "5d": 30, "1mo": 24, "3mo": 70, "6mo": 135, "1y": 270, "2y": 540, "5y": 550, "max": 800,
         };
         const outputsize = isIntraday
           ? Math.min(5000, (sliceDaysToBars(range) ?? 66) * (requestedInterval === "1h" ? 7 : requestedInterval === "30m" ? 14 : 40))
@@ -281,16 +293,21 @@ export async function GET(req: NextRequest) {
         // history on Yahoo — it returns 1 pseudo-bar per day (stamped 09:30).
         // Detect that (≤2 bars per expected session) and fall back to daily.
         const rangeDays: Record<string, number> = {
-          "1d": 1, "5d": 5, "1mo": 22, "3mo": 66, "6mo": 132, "1y": 250, "2y": 500, "5y": 1250,
+          "1d": 1, "5d": 5, "1mo": 22, "3mo": 66, "6mo": 132, "1y": 250, "2y": 500, "5y": 1250, "max": 3000,
         };
         const expectedDays = rangeDays[range] ?? 5;
         const fakeIntraday = isIntraday && yCandles.length <= 2 * expectedDays;
         if (isIntraday && (yCandles.length <= 2 || fakeIntraday)) {
-          const daily = await fetchYahooCandles(symbol, range === "1d" ? "5d" : range, "1d");
-          if (daily.length >= yCandles.length) {
-            candles = daily.slice(-(range === "1d" ? 2 : Math.max(daily.length, 5)));
+          // PSX scrips have no real intraday history on free feeds. Instead of
+          // rendering 1-2 lonely bars, degrade to daily candles over a useful
+          // recent window (floor: 10 bars for 1D, 30 bars for 1W).
+          const degradeRange = range === "1d" ? "1mo" : "3mo";
+          const floorBars = range === "1d" ? 10 : 30;
+          const daily = await fetchYahooCandles(symbol, degradeRange, "1d");
+          if (daily.length > 0) {
+            candles = daily.slice(-Math.max(floorBars, yCandles.length));
             servedInterval = "1d";
-            source = `Yahoo Finance (${stripFuturesSuffix(symbol).toUpperCase()}.KA daily) — intraday history unavailable, showing daily`;
+            source = `Yahoo Finance (${stripFuturesSuffix(symbol).toUpperCase()}.KA daily) — intraday unavailable for PSX, showing last ${candles.length} sessions`;
           } else {
             candles = yCandles;
             servedInterval = requestedInterval;
@@ -343,6 +360,16 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Chart payload guard: cap the number of rendered bars so extreme
+    // combinations (range=max & interval=1d → ~4700 candles since 2008) never
+    // choke the SVG chart. 800 bars ≈ 3 years daily / 15 years weekly — beyond
+    // that the candles are sub-pixel anyway; users zoom into recent history.
+    const MAX_BARS = 800;
+    if (candles.length > MAX_BARS) {
+      candles = candles.slice(-MAX_BARS);
+      source += ` · showing latest ${MAX_BARS}`;
+    }
+
     return respond(symbol, candles, servedInterval, requestedInterval, source);
   } catch (err) {
     console.error("[GET /api/psx/candles] error:", err);
@@ -361,8 +388,32 @@ export async function GET(req: NextRequest) {
 
 // Approximate how many TRADING DAYS the range spans (for intraday sizing)
 function sliceDaysToBars(range: string): number | null {
-  const map: Record<string, number> = { "1d": 1, "5d": 5, "1mo": 22, "3mo": 66, "6mo": 132, "1y": 250, "2y": 500, "5y": 1250 };
+  const map: Record<string, number> = { "1d": 10, "5d": 30, "1mo": 22, "3mo": 66, "6mo": 132, "1y": 250, "2y": 500, "5y": 1250, "max": 3000 };
   return map[range] ?? null;
+}
+
+// Aggregate daily candles into calendar-month buckets (YYYY-MM).
+function aggregateMonthly(daily: Candle[]): Candle[] {
+  const out: Candle[] = [];
+  let cur: Candle | null = null;
+  let curMonth = "";
+  for (const c of daily) {
+    const key = (c.date || "").slice(0, 7); // YYYY-MM
+    if (!key) continue;
+    if (key !== curMonth) {
+      if (cur) out.push(cur);
+      cur = { date: c.date, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume, changePct: c.changePct };
+      curMonth = key;
+    } else if (cur) {
+      cur.high = Math.max(cur.high, c.high);
+      cur.low = Math.min(cur.low, c.low);
+      cur.close = c.close;
+      cur.volume += c.volume;
+      if (cur.open === 0) cur.open = c.open;
+    }
+  }
+  if (cur) out.push(cur);
+  return out;
 }
 
 // Aggregate daily candles into ISO-week buckets (Mon–Fri PKT).

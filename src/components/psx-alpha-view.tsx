@@ -56,9 +56,8 @@ import {
 } from "@/components/ui/select";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { ProfessionalChart } from "@/components/professional-chart";
+import { ChartReaderPanel } from "@/components/chart-reader";
 import { cleanSymbol } from "@/lib/symbol-utils";
-import { detectPatternEvents } from "@/lib/patterns";
-import { computeSrLevels } from "@/lib/indicators";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import {
@@ -362,24 +361,6 @@ export function PsxAlphaView() {
   // KSE100 is an index, not a tradable stock — we don't show its trade plan
   const [symbol, setSymbol] = React.useState<string>("");
   const [search, setSearch] = React.useState("");
-
-  // Chart Reader — pattern events + support/resistance computed client-side
-  // from the same real candle history the chart shows.
-  const readerCandles =
-    symbol === "KSE100"
-      ? candles
-      : analysisCandlesFor === symbol
-      ? analysisCandles
-      : [];
-  const chartReader = React.useMemo(() => {
-    if (!readerCandles || readerCandles.length < 5) return null;
-    const events = detectPatternEvents(readerCandles, 60, 8, "moderate");
-    const sr = computeSrLevels(readerCandles, 120);
-    const bull = events.filter((e) => e.type === "bullish").length;
-    const bear = events.filter((e) => e.type === "bearish").length;
-    const neutral = events.filter((e) => e.type === "neutral").length;
-    return { events, sr, bull, bear, neutral };
-  }, [readerCandles]);
 
   // Analysis is only trustworthy when it belongs to the currently-selected
   // symbol (slow AI responses for an old symbol must never render here).
@@ -1996,158 +1977,9 @@ export function PsxAlphaView() {
                 </div>
               )}
 
-              {/* Chart Reader — patterns + structure + key levels */}
-              <div className="mt-4 pt-3 border-t border-border/60">
-                <div className="flex items-center justify-between mb-2">
-                  <p className="text-xs font-medium text-muted-foreground flex items-center gap-1">
-                    <Crosshair className="h-3 w-3 text-violet-500" />
-                    Chart Reader — patterns &amp; key levels
-                  </p>
-                  <span className="text-[9px] text-muted-foreground">last 60 sessions</span>
-                </div>
+                            {/* Chart Reader — pro auto read + patterns + key levels */}
+              <ChartReaderPanel symbol={symbol} />
 
-                {/* Bull vs Bear pattern meter */}
-                {chartReader && (chartReader.bull > 0 || chartReader.bear > 0) && (
-                  <div className="mb-3">
-                    <div className="flex items-center justify-between text-[9px] mb-1">
-                      <span className="text-emerald-600 dark:text-emerald-400 font-medium">
-                        ▲ {chartReader.bull} bullish
-                      </span>
-                      <span className="text-muted-foreground">pattern balance</span>
-                      <span className="text-rose-600 dark:text-rose-400 font-medium">
-                        {chartReader.bear} bearish ▼
-                      </span>
-                    </div>
-                    <div className="h-1.5 rounded-full overflow-hidden bg-rose-500/70 flex">
-                      <div
-                        className="h-full bg-emerald-500"
-                        style={{
-                          width: `${
-                            (chartReader.bull / Math.max(1, chartReader.bull + chartReader.bear)) * 100
-                          }%`,
-                        }}
-                      />
-                    </div>
-                  </div>
-                )}
-
-                {/* Latest candle patterns */}
-                <p className="text-[10px] text-muted-foreground/70 mb-1">On the latest candle</p>
-                {analysisCurrent?.patterns && analysisCurrent.patterns.length > 0 ? (
-                  <ul className="space-y-1.5 mb-3">
-                    {analysisCurrent.patterns.map((p, i) => (
-                      <li
-                        key={i}
-                        className={cn(
-                          "rounded-md border px-2 py-1.5 text-xs",
-                          p.type === "bullish"
-                            ? "border-emerald-200 bg-emerald-50/50 dark:border-emerald-900/60 dark:bg-emerald-950/20"
-                            : p.type === "bearish"
-                            ? "border-rose-200 bg-rose-50/50 dark:border-rose-900/60 dark:bg-rose-950/20"
-                            : "border-amber-200 bg-amber-50/50 dark:border-amber-900/60 dark:bg-amber-950/20"
-                        )}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="font-medium">{p.name}</span>
-                          <Badge
-                            variant="outline"
-                            className={cn(
-                              "text-[9px] px-1 py-0 h-4 capitalize",
-                              p.type === "bullish"
-                                ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/60 dark:text-emerald-300"
-                                : p.type === "bearish"
-                                ? "bg-rose-100 text-rose-700 dark:bg-rose-900/60 dark:text-rose-300"
-                                : "bg-amber-100 text-amber-700 dark:bg-amber-900/60 dark:text-amber-300"
-                            )}
-                          >
-                            {p.type} · {p.strength}
-                          </Badge>
-                        </div>
-                        <p className="text-[10px] text-muted-foreground mt-0.5">
-                          {p.description}
-                        </p>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="text-xs text-muted-foreground mb-3">No significant patterns on the latest candle</p>
-                )}
-
-                {/* Recent pattern events (dated, newest first) */}
-                {chartReader && chartReader.events.length > 0 && (
-                  <div className="mb-3">
-                    <p className="text-[10px] text-muted-foreground/70 mb-1">Recent pattern events</p>
-                    <ul className="space-y-1">
-                      {chartReader.events.slice(0, 5).map((e, i) => (
-                        <li
-                          key={i}
-                          className="flex items-center justify-between text-[11px] rounded px-1.5 py-1 bg-muted/30"
-                        >
-                          <span className="flex items-center gap-1.5 min-w-0">
-                            <span
-                              className={cn(
-                                "shrink-0",
-                                e.type === "bullish"
-                                  ? "text-emerald-600 dark:text-emerald-400"
-                                  : e.type === "bearish"
-                                  ? "text-rose-600 dark:text-rose-400"
-                                  : "text-amber-600 dark:text-amber-400"
-                              )}
-                            >
-                              {e.type === "bullish" ? "▲" : e.type === "bearish" ? "▼" : "◆"}
-                            </span>
-                            <span className="font-medium truncate">{e.name}</span>
-                          </span>
-                          <span className="text-[9px] text-muted-foreground tabular-nums shrink-0 ml-2">
-                            {e.date}
-                          </span>
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-
-                {/* Support / Resistance + market structure */}
-                {chartReader?.sr && (chartReader.sr.supports.length > 0 || chartReader.sr.resistances.length > 0) && (
-                  <div>
-                    <p className="text-[10px] text-muted-foreground/70 mb-1">Key levels</p>
-                    <div className="space-y-1">
-                      {chartReader.sr.resistances.map((r, i) => (
-                        <div key={`r${i}`} className="flex items-center justify-between text-[11px] rounded px-1.5 py-1 bg-rose-500/5 border border-rose-500/15">
-                          <span className="text-rose-600 dark:text-rose-400 font-medium">R{i + 1} · resistance</span>
-                          <span className="tabular-nums font-semibold">
-                            {r.price.toFixed(2)}
-                            <span className="text-[9px] text-muted-foreground font-normal ml-1.5">
-                              +{r.distPct.toFixed(1)}%{r.touches > 1 ? ` · ${r.touches}×` : ""}
-                            </span>
-                          </span>
-                        </div>
-                      ))}
-                      {chartReader.sr.supports.map((s, i) => (
-                        <div key={`s${i}`} className="flex items-center justify-between text-[11px] rounded px-1.5 py-1 bg-emerald-500/5 border border-emerald-500/15">
-                          <span className="text-emerald-600 dark:text-emerald-400 font-medium">S{i + 1} · support</span>
-                          <span className="tabular-nums font-semibold">
-                            {s.price.toFixed(2)}
-                            <span className="text-[9px] text-muted-foreground font-normal ml-1.5">
-                              {s.distPct.toFixed(1)}%{s.touches > 1 ? ` · ${s.touches}×` : ""}
-                            </span>
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                    <p className="text-[10px] text-muted-foreground mt-1.5 flex items-center gap-1">
-                      {chartReader.sr.structure === "uptrend" ? (
-                        <TrendingUp className="h-3 w-3 text-emerald-500" />
-                      ) : chartReader.sr.structure === "downtrend" ? (
-                        <TrendingDown className="h-3 w-3 text-rose-500" />
-                      ) : (
-                        <Minus className="h-3 w-3 text-muted-foreground" />
-                      )}
-                      Structure: {chartReader.sr.structureLabel}
-                    </p>
-                  </div>
-                )}
-              </div>
             </CardContent>
           </Card>
         </div>
